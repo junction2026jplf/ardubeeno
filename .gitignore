@@ -35,3 +35,8 @@ dashboard/.venv/
 dashboard/var/
 # demo images come from data/ (same license as the dataset), kept out like data/
 demo/*.png
+# catch-alls (any yolo_cam* variant, env files, Python leftovers)
+yolo_cam*/
+.env
+*.pyc
+.pytest_cache/

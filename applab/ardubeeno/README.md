@@ -11,8 +11,8 @@ that turns the verdict to MITE, not once per frame; reset it with the button in 
 a mite icon alternates with the number.
 
 By default it uses the files and thresholds in `python/deploy.json` (copied by `make applab` from `export/deploy/`):
-the camera-fine-tuned detector and 160 px classifier, both int8 (`varroa.onnx`, `varroa_cls.onnx`; camera test
-F1 0.877, original test 0.850). `MODELS` overrides the model files (see Speed below).
+the camera-fine-tuned detector and the letterbox-trained 288 px classifier, both int8 (`varroa.onnx`,
+`varroa_cls.onnx`; at the deployed sensitive point camera test F1 0.859, recall 0.926, original test F1 0.873). `MODELS` overrides the model files (see Speed below).
 
 ## All bees or one bee
 
@@ -45,11 +45,11 @@ or as environment variables in App Lab):
   `CROP_MARGIN` (0.15), or `crop_margin` in a `bees.json` next to `bees.onnx` (the Makefile copies `foo.json`
   next to `BEE_MODEL=foo.onnx`), so the margin travels with a bee detector whose boxes are tighter.
 - **Mite check**: classifier first (cascade): below `cls_lo` the bee is clean, from `cls_hi` it is a mite, and only
-  in between does the mite detector decide too (deploy.json: 0.02 / 0.30, the detector is skipped for 86% of bees;
+  in between does the mite detector decide too (deploy.json: 0.20 / 0.73, the detector is skipped for 89% of camera-test bees;
   without deploy.json: 0.31 / 0.60; `--cls-lo`, `--cls-hi`; `--no-cascade` runs both always). At most 2
   bee crops wait for the check at a time, fewest checks first (`--max-checks`, `MAX_CHECKS`); the checks run in a
   thread next to the bee detector.
-- **Models**: by default the files and thresholds in `deploy.json` (fuse 0.16, cascade 0.02 / 0.30). `--models` /
+- **Models**: by default the files and thresholds in `deploy.json` (fuse 0.21, cascade 0.20 / 0.73). `--models` /
   `MODELS` picks an older set from `export/fast/` instead: `c160-int8all` (int8, 160 px classifier, board F1 0.926
   on the 200 sample bees; the fallback without deploy.json), `int8-qdqall` (288 px classifier), `deployed`
   (`varroa.onnx` + `varroa_cls.onnx`, i.e. whichever pair `make applab` copied). deploy.json's thresholds only go
@@ -113,6 +113,6 @@ Label a few hundred of those from your own hive camera (mite / clean) to recalib
 | `python/monitor.py` | Shared: runs the model on the newest frame, aggregates frames, draws the results on every camera frame for the MJPEG stream |
 | `python/serve.py` | The same preview as a plain Python server (no App Lab) |
 | `python/camera_ctl.py` | Camera focus/exposure via v4l2-ctl or OpenCV (`/camera`) |
-| `python/device_check.py`, `*.onnx` | Copied by `make applab` from `scripts/` and `export/` |
+| `python/device_check.py`, `*.onnx`, `deploy.json`, `bees.json` | Build outputs: copied by `make applab` from `scripts/` and `export/`, .gitignored (edit `scripts/device_check.py`, not the copy) |
 | `assets/index.html` | The page: live stream, verdict, mite list, settings, frame saving |
 | `sketch/sketch.ino` | LED matrix: blinking mite or tick, set from Python over the Bridge |

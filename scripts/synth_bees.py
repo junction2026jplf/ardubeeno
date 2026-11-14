@@ -24,7 +24,6 @@ TRAIN are camera-domain crops (yolo_cam/images/train, with crop_bee's 15% margin
 """
 import argparse
 import math
-import os
 import sys
 from multiprocessing import Pool
 from pathlib import Path

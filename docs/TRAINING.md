@@ -22,7 +22,7 @@ camera frame (1280x720)
    |
    v
 [4] mite check (cascade)
-      classifier varroa_cls.onnx (YOLO11n-cls, 160 px) -> mite prob p
+      classifier varroa_cls.onnx (YOLO11n-cls, 288 px) -> mite prob p
         p <  cls_lo                -> clean (mite detector skipped)
         p >= cls_hi                -> mite
         otherwise                  -> mite detector varroa.onnx (YOLO11n, 320x192)
@@ -35,7 +35,10 @@ camera frame (1280x720)
 LED matrix, web page (port 7000), dashboard API (outbox)
 ```
 
-Deployed thresholds (`export/deploy/deploy.json`): `fuse_conf` 0.16, `cls_lo` 0.02, `cls_hi` 0.30.
+Deployed thresholds (`export/deploy/deploy.json`, set `camsq288-int8all-sensitive`): `fuse_conf` 0.21, `cls_lo` 0.20,
+`cls_hi` 0.73, with the letterbox-trained 288 px classifier `cls-cam-sq288`. Sections 2-6 below were written for the
+previous set (`cam160-int8all`: 160 px classifier, 0.16 / 0.02 / 0.30); the switch and its numbers are in
+`RESULTS.md`, "Camera fine-tune".
 
 ## 1. Data
 
@@ -52,15 +55,37 @@ videos not used anywhere else) is the honest split. All thresholds are chosen on
 
 ### Camera-on-screen recordings
 
-`scripts/record.py` (via `make record`) shows images full-screen, films them, and saves settled still frames plus
-YOLO labels (0 bee, 1 varroa). It starts with an ArUco marker screen to fit the screen-to-camera homography and
-recalibrates during the run. See the "Screen-to-camera training data" section of `README.md` for all options.
+`scripts/record.py` shows dataset images full-screen (black background), films the screen with a USB camera,
+and saves the video plus settled still frames with YOLO labels (0 bee, 1 varroa) mapped into camera
+coordinates, so a model can be fine-tuned on what a real camera sees of the screen.
 
 ```sh
-make record-cameras                                     # list screens and cameras
-make record SRC=data/test CAMERA=1 REC_ARGS="--tile 3x2 --only mite"
-make record-mendeley CAMERA=1                           # Mendeley landing-board val split
+make record-cameras                       # list screens and cameras (+ snapshots in captures/cameras/)
+make record SRC=data/test CAMERA=1 REC_ARGS="--limit 300 --shuffle --duration 1.5"
+make record SRC=data/test CAMERA=1 REC_ARGS="--tile 3x2 --only mite"     # 6 crops per screen = multi-bee scene
+make record SRC=datasets/<name> CAMERA=1 REC_ARGS="--split val --screen 1"  # YOLO folder or its yaml
+make record-mendeley CAMERA=1 REC_ARGS="--duration 1.5"   # Mendeley landing-board val split, 1,410 frames, shuffled
+make record CAMERA=sim REC_ARGS="--headless --limit 10"                  # dry run with a simulated camera
 ```
+
+- **macOS camera permission:** run it from your own Terminal/iTerm; the first run asks for Camera access
+  (System Settings > Privacy & Security > Camera, enable the terminal app, then restart it). Without it
+  the camera delivers no frames.
+- **Setup:** point the camera at the screen so it sees all of it, focus, and lock exposure if the camera allows.
+  The run starts with an ArUco marker screen; it fits the screen -> camera homography from it
+  (`calib_start.jpg` shows what was detected). It recalibrates every `--recalib-every` slides, when the
+  camera view stops matching the slides, on key `c`, and at the end, and warns if the camera moved.
+  Keys: `Esc`/`q` quit.
+- **Small bees:** images keep their aspect ratio (letterboxed on black). The run prints the median bee size in
+  camera pixels (and warns below `--min-bee-px`, default 40). Mendeley bees are ~50–100 px at 1080p, so the screen
+  should fill most of a 1080p+ camera frame. Missing YOLO label files count as frames without bees.
+- **Frames:** per slide, `--stills` frames after `--settle` seconds, only once the rectified camera view matches
+  the new slide and is steady (no transition blends).
+- **Output** in `captures/screen-<time>/`: `video.mp4`, `images/`, `labels/` (YOLO), `data.yaml`, `manifest.csv`
+  (source image(s), their gt_one.csv flag or label file, camera frame, time, calibration, match score, box counts),
+  `calibration.json`. Single-bee crops get a bee box covering the whole crop.
+- Sources: a data split with `gt_one.csv`, a YOLO dataset (class names bee/varroa/mite are recognised, others kept,
+  `--class-map` to rename), or a folder of plain images. `--camera` also takes a video file or `none` (slideshow only).
 
 `scripts/camera_crops.py` turns the recordings into mite training data. It cuts every bee out with the app's own
 `crop_bee` (imported from `applab/ardubeeno/python/bees.py`), so training sees what the board sees:
@@ -75,7 +100,7 @@ make record-mendeley CAMERA=1                           # Mendeley landing-board
 | `yolo_cam_cls/` | Classifier crops, mite/clean, raw 160x280 |
 | `yolo_cam_mix/` | Classifier set: original train + camera train; val/test camera only |
 | `varroa_cam.yaml` | Detector set: original train+val + camera train; val/test camera only |
-| `yolo_cam_cls_sq/`, `yolo_cam_mix_sq/` | Letterboxed 280x280 variants of the two classifier sets (not used for the deployed models) |
+| `yolo_cam_cls_sq/`, `yolo_cam_mix_sq/` | Letterboxed 280x280 variants of the two classifier sets (`yolo_cam_mix_sq` trains the deployed `cls-cam-sq288`) |
 
 For the bee detector, camera frames were also turned into `datasets/cam_tiles/` (tiled crop slides, bees about
 320-480 px) and `datasets/cam_landing/` (landing-board recordings, bees about 55 px), combined in

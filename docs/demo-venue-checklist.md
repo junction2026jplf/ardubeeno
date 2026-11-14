@@ -15,7 +15,7 @@ One page. Do it in order, then never touch the camera again.
 - [ ] **Room light steady.** No blue reflections on the screen (they washed out the bees in our first test). Check for stage lights and projector light hitting the laptop.
 - [ ] **Camera resolution:** our recordings used 1920×1080. The App Lab app captures 1280×720 (set in `main.py`).
 - [ ] **Right camera index:** `make record-cameras` lists the cameras and saves a test picture from each. On the board the app uses `CAMERA` (default `usb:0`).
-- [ ] Board connected to the Mac over USB; board at `169.254.100.2`, Mac at `169.254.125.210`.
+- [ ] Board connected to the Mac over USB; board at `169.254.100.2`, Mac at `169.254.125.210` in our setup (use your board's and laptop's IPs).
 - [ ] Receiver running on the Mac: `demo/start-receiver.sh`.
 - [ ] Backup video of the board working, ready to play.
 

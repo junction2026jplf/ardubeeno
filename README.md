@@ -1,72 +1,141 @@
-# ArduBeeno
+# ArduBeeno: Varroa mite detection on the Arduino UNO Q
 
-> Off-grid Edge AI on Arduino Uno Q that detects deadly Varroa mites in real time—protecting remote beehives without cloud connectivity.
+ArduBeeno checks every bee in a USB camera's view for Varroa mites, on the Arduino UNO Q itself, with no
+cloud connection. The board finds and tracks bees, runs a small mite classifier and detector on each bee crop,
+shows the result on its LED matrix and a web page, and queues the events for an optional local dashboard.
 
-**Junction 2026: European Tech Renaissance** · Track: *The Green European Renaissance* · Tech challenge: *Best use of Arduino Uno Q*
+Built at Junction 2026 (track "The Green European Renaissance", challenge "Best use of Arduino Uno Q") by a team
+from 42 Heilbronn. The demo films bee images on a laptop screen; it has not been tested at a real hive yet.
 
-## The Problem: A Silent Threat to Global Food Security
-
-Roughly **75% of global food crops** depend on animal pollination, sustaining over **8 billion people** and **$577 billion** in annual agricultural output. Yet honeybee populations face an existential biological threat: the parasitic mite ***Varroa destructor***.
-
-*Varroa* mites attach to honeybees, feed on their vital fat bodies, weaken their immune systems, and transmit lethal pathogens such as Deformed Wing Virus (DWV). Without timely detection and intervention, infested colonies suffer up to **95% collapse rates within 3 to 4 years**.
-
-## The Infrastructure Gap: Why Cloud AI Fails in the Field
-
-Modern computer vision can spot *Varroa* mites, but existing solutions rely on cloud processing. In reality, **most beehives are located in remote meadows, forests, and rural fields with zero cellular or Wi-Fi connectivity**. Streaming continuous high-resolution video to the cloud is impossible off-grid, prohibitively expensive, and drains battery reserves far too quickly for remote solar-powered setups.
-
-## What We Built: A Guard That Detects the Mites
-
-ArduBeeno is an autonomous, real-time **Edge AI intruder detection system** running entirely on an **Arduino Uno Q** paired with a compact camera mounted at the beehive entrance.
-
-By leveraging the Arduino Uno Q's hybrid architecture (a high-performance AI processor combined with a real-time STM32 microcontroller), our computer vision model inspects bees entering and exiting the hive locally in milliseconds—identifying *Varroa* mites directly on the edge with **zero internet connection required**.
-
-### How It Works
-
-1. **Capture:** A macro camera positioned at the hive landing board captures frames of returning forager bees.
-2. **On-Device Inference:** Our lightweight vision model runs locally on the Arduino Uno Q to detect individual bees and spot parasitic *Varroa* mites on their bodies.
-3. **Infestation Tracking:** The microcontroller tracks detection counts over time to calculate colony infestation rates and filter out false positives.
-4. **Actionable Alerts:** When mite density crosses a critical threshold, the system logs the event and triggers a local alert so beekeepers can intervene immediately.
-
-## Key Benefits
-
-- **100% Off-Grid & Solar-Ready:** Operates reliably in remote forests and fields without cellular networks, cloud subscriptions, or high power draw.
-- **Early Intervention:** Detects outbreaks weeks before visual symptoms appear, preventing winter colony collapse.
-- **Precision Beekeeping:** Replaces blanket chemical miticide treatments with targeted, data-driven intervention—keeping hives and honey healthier.
-
-## Real-World Pilot at 42 Heilbronn
-
-We are a team of alumni and staff from **42 Heilbronn**, a peer-to-peer coding school in Germany. Our campus is home to **active beehives right outside our building**, giving us a living, real-world testbed to deploy, validate, and protect local bee colonies with self-built Edge AI.
-
-## Screen-to-camera training data (`make record`)
-
-`scripts/record.py` shows dataset images full-screen (black background), films the screen with a USB camera,
-and saves the video plus settled still frames with YOLO labels (0 bee, 1 varroa) mapped into camera
-coordinates, so a model can be fine-tuned on what a real camera sees of the screen.
-
-```sh
-make record-cameras                       # list screens and cameras (+ snapshots in captures/cameras/)
-make record SRC=data/test CAMERA=1 REC_ARGS="--limit 300 --shuffle --duration 1.5"
-make record SRC=data/test CAMERA=1 REC_ARGS="--tile 3x2 --only mite"     # 6 crops per screen = multi-bee scene
-make record SRC=datasets/<name> CAMERA=1 REC_ARGS="--split val --screen 1"  # YOLO folder or its yaml
-make record-mendeley CAMERA=1 REC_ARGS="--duration 1.5"   # Mendeley landing-board val split, 1,410 frames, shuffled
-make record CAMERA=sim REC_ARGS="--headless --limit 10"                  # dry run with a simulated camera
+```
+USB camera (1280x720)
+   |
+   v
+bee detector  bees.onnx (YOLO11n, every 3rd frame) --> tracker (one ID per bee)
+   |
+   v
+per-bee crop (4:7, 160x280)
+   |
+   v
+mite check, classifier first:  varroa_cls.onnx (YOLO11n-cls, 288 px, int8) -> p
+   p < cls_lo -> clean   |   p >= cls_hi -> mite   |   else + varroa.onnx (YOLO11n, 320x192, int8)
+   |
+   v
+bee = MITE after 2 positive checks --> LED matrix, web page :7000, outbox --> receiver + dashboard :8000
 ```
 
-- **macOS camera permission:** run it from your own Terminal/iTerm; the first run asks for Camera access
-  (System Settings > Privacy & Security > Camera, enable the terminal app, then restart it). Without it
-  the camera delivers no frames.
-- **Setup:** point the camera at the screen so it sees all of it, focus, and lock exposure if the camera allows.
-  The run starts with an ArUco marker screen; it fits the screen -> camera homography from it
-  (`calib_start.jpg` shows what was detected). It recalibrates every `--recalib-every` slides, when the
-  camera view stops matching the slides, on key `c`, and at the end, and warns if the camera moved.
-  Keys: `Esc`/`q` quit.
-- **Small bees:** images keep their aspect ratio (letterboxed on black). The run prints the median bee size in
-  camera pixels (and warns below `--min-bee-px`, default 40). Mendeley bees are ~50–100 px at 1080p, so the screen
-  should fill most of a 1080p+ camera frame. Missing YOLO label files count as frames without bees.
-- **Frames:** per slide, `--stills` frames after `--settle` seconds, only once the rectified camera view matches
-  the new slide and is steady (no transition blends).
-- **Output** in `captures/screen-<time>/`: `video.mp4`, `images/`, `labels/` (YOLO), `data.yaml`, `manifest.csv`
-  (source image(s), their gt_one.csv flag or label file, camera frame, time, calibration, match score, box counts),
-  `calibration.json`. Single-bee crops get a bee box covering the whole crop.
-- Sources: a data split with `gt_one.csv`, a YOLO dataset (class names bee/varroa/mite are recognised, others kept,
-  `--class-map` to rename), or a folder of plain images. `--camera` also takes a video file or `none` (slideshow only).
+## Results
+
+Numbers from `RESULTS.md`, `export/deploy/deploy.json` and `docs/demo-script.md`. Thresholds are chosen on val
+and applied once to test; the test videos are not used anywhere else.
+
+| Measure | Value |
+|---|---|
+| Original test set (3,408 bee crops from 2 held-out videos), first deployed pair | F1 0.901 (precision 0.918, recall 0.884) |
+| Camera test set (3,600 bees filmed off a screen), that pair before the camera fine-tune | F1 0.725 |
+| Camera test set, deployed int8 set (`camsq288-int8all-sensitive`) | F1 0.859 (precision 0.801, recall 0.926) |
+| Original test set, deployed int8 set | F1 0.873 |
+| Mite detector skipped by the cascade (camera test) | 89% of bees |
+| On the board: live view / processing rate | ~25 FPS / ~5 FPS |
+| On the board: mite check per bee / bee detector per frame | ~140-165 ms / ~0.5 s |
+
+Main limit: mites under a wing (recall about 0.55-0.65, against about 0.95 for visible mites). Bigger classifiers
+(ConvNeXt, DINOv2) did not do better; more and better-matched data is the next step. Details in `RESULTS.md`.
+
+## Repo layout
+
+| Path | Contents |
+|---|---|
+| `applab/ardubeeno/` | The Arduino App Lab app: Python (`main.py`, `serve.py`, `monitor.py`, `bees.py`, `outbox.py`), web page, LED-matrix sketch |
+| `dashboard/` | Receiver API (FastAPI + SQLite) and dashboard for the board's events, with tests |
+| `scripts/` | Data conversion, training, evaluation, ONNX export and quantization, screen recording, laptop tools |
+| `demo/` | `start-receiver.sh`; the local `*.env` config files and demo images are not in git |
+| `docs/` | Training notes, deploy plan, demo script and checklist, device outbox contract, dashboard design draft |
+| `RESULTS.md` | All experiments and measurements |
+| `Makefile` | Entry points (`make help`) |
+
+## Not in this repo
+
+- `data/`: the Varroa bee-crop dataset (see Data and models below).
+- `datasets/`: bee-detector datasets (BEEHIVE, Mendeley landing boards, camera recordings, synthetic bees, COCO
+  negatives) and their download/convert helpers.
+- `runs/` (training runs), `export/` (ONNX models, `deploy.json`), `captures/` (recordings), `yolo*/` and
+  `varroa*.yaml` (generated).
+
+The models can be rebuilt with the scripts and the datasets below; the trained ONNX files can be shared on request.
+
+## Quick start
+
+Needs [uv](https://docs.astral.sh/uv/), Python 3.12, and for training a Mac (`DEVICE=mps`) or a CUDA GPU.
+
+```sh
+make setup                     # .venv with requirements.txt (ultralytics, onnxruntime, opencv, ...)
+```
+
+**Data.** Put the Varroa bee-crop dataset in `data/{train,val,test}/`, each with `gt_one.csv` (one line per crop:
+image path, flag 0/1/3, mite boxes) and the crops under `videos/<video>/`.
+
+```sh
+make convert                   # data/ -> yolo/ + varroa.yaml
+make smoke                     # 1 epoch on 5% of the data
+make train                     # mite detector (EPOCHS=60 IMGSZ=320)
+make eval                      # box metrics and per-bee F1 on test
+make export                    # export/varroa.onnx
+```
+
+The classifier, camera fine-tune, quantization and the deployed set (`scripts/deploy_build.py`) are described in
+[docs/TRAINING.md](docs/TRAINING.md).
+
+**Board.** Hardware: an Arduino UNO Q and a USB camera (a powered USB-C hub if needed), reachable over SSH.
+
+```sh
+make applab                                  # copy models + deploy.json into applab/ardubeeno/python/
+make applab-push BOARD=arduino@<board-ip>    # copy the app to ~/ArduinoApps/ardubeeno on the board
+make applab-config BOARD=arduino@<board-ip>  # upload demo/ardubeeno.env, check the receiver from the board
+make applab-local                            # or: the same app on this laptop's webcam, http://localhost:7000
+```
+
+Then start **ArduBeeno Varroa** in App Lab and open `http://<board-ip>:7000`.
+
+**Dashboard (optional).** Create the dashboard venv (see [dashboard/README.md](dashboard/README.md)) and two local
+config files, which are .gitignored:
+
+- `demo/receiver.env`: `ARDUBEENO_DEVICES_JSON='{"uno-q-01":{"name":"Hive 01","timezone":"Europe/Helsinki","token":"<long random token>"}}'`
+  and `ARDUBEENO_DB=dashboard/var/receiver.sqlite3`
+- `demo/ardubeeno.env`: `ARDUBEENO_SERVER_URL=http://<laptop-ip>:8000`, `ARDUBEENO_DEVICE_ID=uno-q-01`,
+  `ARDUBEENO_DEVICE_TOKEN=<the same token>`, optionally `ARDUBEENO_SOURCE=screen_demo` (the demo's dashboard source;
+  other values: `field`, `replay`)
+
+```sh
+demo/start-receiver.sh         # receiver + dashboard on port 8000, all interfaces
+```
+
+## Documentation
+
+- [docs/TRAINING.md](docs/TRAINING.md): data, models, training, evaluation, export
+- [applab/ardubeeno/README.md](applab/ardubeeno/README.md): the board app, its settings and speed
+- [dashboard/README.md](dashboard/README.md): receiver and dashboard; [docs/mite-device-outbox.md](docs/mite-device-outbox.md): upload contract
+- [docs/deploy-plan.md](docs/deploy-plan.md), [docs/demo-script.md](docs/demo-script.md),
+  [docs/demo-venue-checklist.md](docs/demo-venue-checklist.md): deployment and demo
+- [RESULTS.md](RESULTS.md): experiments and measurements
+
+## Data and models
+
+| Source | Used for | License |
+|---|---|---|
+| Varroa bee-crop dataset: 13,509 crops from 2017 hive-entrance videos, mite boxes in `gt_one.csv` | Mite detector and classifier, all test numbers | **Origin and license not yet documented here (TODO)** |
+| [BEEHIVE: a public dataset of Apis mellifera images](https://doi.org/10.17632/5yz78xxpmy.1), Micheli, Nuzzi, Papa, Mendeley Data v1 | Bee detector (close-ups) | CC BY 4.0 |
+| [Labeled dataset for bee detection and direction estimation on beehive landing boards](https://doi.org/10.17632/8gb9r2yhfc.6), Sledevic, Mendeley Data v6 | Bee detector (landing boards), screen recordings | CC BY 4.0 |
+| [EV2 dataset](https://zenodo.org/records/13771384), Zenodo 13771384 | Evaluation on foreign footage; one rejected training experiment | CC BY 4.0 |
+| [COCO](https://cocodataset.org/) val2017 | Hard negatives for the bee detector (`scripts/make_negatives.py`) | Annotations CC BY 4.0; images under the Flickr terms of use of each image |
+| [Ultralytics YOLO11](https://github.com/ultralytics/ultralytics) (`yolo11n.pt`, `yolo11n-cls.pt`) | Training framework and pretrained weights for all models | AGPL-3.0 (or an Ultralytics Enterprise license) |
+
+Models trained with Ultralytics from its pretrained weights, and code that uses `ultralytics`, fall under
+AGPL-3.0 obligations: if you distribute them or offer them over a network, the corresponding source has to be
+available under AGPL-3.0, unless you hold an Ultralytics Enterprise license. The board app itself only needs
+`numpy`, `opencv-python-headless` and `onnxruntime`, but its ONNX models are derived from the YOLO11 weights.
+
+## License
+
+No license has been chosen for this repository yet, so all rights are reserved by the authors for now. See the
+Ultralytics note above before picking one.

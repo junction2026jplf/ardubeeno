@@ -2,7 +2,7 @@
 
 Tick each box when done. "command follows" means the exact command depends on work that is still in progress; fill it in when it lands.
 
-Fixed addresses (USB link):
+Addresses in our setup (USB link; replace them with your board's and your laptop's IPs):
 
 - Board: `arduino@169.254.100.2`, app page `http://169.254.100.2:7000`
 - Mac (receiver/dashboard): `http://169.254.125.210:8000`
