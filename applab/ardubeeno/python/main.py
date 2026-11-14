@@ -40,7 +40,9 @@ monitor = Monitor(models=env("MODELS"), threads=int(env("THREADS", 2)),
                   min_hits=int(env("MIN_HITS", 2)), strong=opt("STRONG"), crop_margin=opt("CROP_MARGIN"),
                   match_iou=float(env("MATCH_IOU", 0.1)), match_dist=float(env("MATCH_DIST", 1.5)),
                   lost_s=float(env("LOST_S", 1.5)), lost_runs=int(env("LOST_RUNS", 3)),
-                  oriented=env("ORIENT", "0") == "1", cut=float(env("CUT", 0)))
+                  oriented=env("ORIENT", "0") == "1", cut=float(env("CUT", 0)),
+                  source=env("ARDUBEENO_SOURCE") or env("SOURCE") or "field",
+                  source_override=bool(env("SOURCE")))
 camera = Camera(os.environ.get("CAMERA", "usb:0"), resolution=(1280, 720), fps=15)
 ui = WebUI()
 camera_lock = threading.Lock()

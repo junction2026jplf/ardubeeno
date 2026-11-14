@@ -85,12 +85,18 @@ class Store:
             latest = db.execute("SELECT max(occurred_at) AS occurred,max(received_at) AS received FROM events WHERE device_id=?", (device_id,)).fetchone()
             receipt = db.execute("SELECT last_received_at FROM device_receipts WHERE device_id=?", (device_id,)).fetchone()
             heartbeat = db.execute("SELECT payload FROM events WHERE device_id=? AND kind='heartbeat' ORDER BY occurred_at DESC,event_id DESC LIMIT 1", (device_id,)).fetchone()
+            last_src = db.execute("SELECT source FROM events WHERE device_id=? ORDER BY occurred_at DESC,event_id DESC LIMIT 1", (device_id,)).fetchone()
+            src_rows = db.execute("SELECT source,max(occurred_at) AS latest FROM events WHERE device_id=? AND kind IN ('bee_passage','coverage') GROUP BY source", (device_id,)).fetchall()
         heart = json.loads(heartbeat["payload"]) if heartbeat else None
         stale = not heart or (datetime.now(UTC) - datetime.fromisoformat(heart["occurred_at"])).total_seconds() > 120
         status = "never_seen" if not latest["received"] else "offline" if stale else heart["status"]
         return {"id": device_id, "name": config["name"], "timezone": config["timezone"], "status": status,
                 "last_seen": latest["occurred"], "last_occurred_at": latest["occurred"],
-                "last_received_at": receipt["last_received_at"] if receipt else latest["received"], "pending_events": heart["pending_events"] if heart else None,
+                "last_received_at": receipt["last_received_at"] if receipt else latest["received"],
+                "pending_events": heart["pending_events"] if heart else None,
+                "active_source": heart["source"] if heart else (last_src["source"] if last_src else None),
+                "sources": {r["source"]: r["latest"] for r in src_rows},
+                "live_url": config.get("live_url"),
                 "stale": stale}
 
     def history(self, device_id, start, end, zone, bucket, source, method="bee_tracks_v1"):
@@ -145,6 +151,7 @@ def summarize(passages, intervals, start, end):
     return {
         "bees_observed": len(assessments) if available else None,
         "bees_with_detected_mites": assessments.count("mites_detected") if available else None,
+        "bees_not_detected": assessments.count("not_detected") if available else None,
         "bees_assessment_uncertain": assessments.count("uncertain") if available else None,
         "recorded_seconds": recorded, "requested_seconds": duration,
         "events_outside_coverage": outside, "rate_available": bool(recorded and not outside),
@@ -156,7 +163,15 @@ def summarize(passages, intervals, start, end):
 def boundaries(start, end, zone, bucket):
     tz = ZoneInfo(zone)
     local = start.astimezone(tz)
-    if bucket == "hour":
+    if bucket == "5m":
+        minute = (local.minute // 5) * 5
+        cursor = local.replace(minute=minute, second=0, microsecond=0).astimezone(UTC)
+        while cursor < end:
+            following = cursor + timedelta(minutes=5)
+            if following > start:
+                yield max(cursor, start), min(following, end), cursor.astimezone(tz).strftime("%d %b %H:%M %z")
+            cursor = following
+    elif bucket == "hour":
         cursor = local.replace(minute=0, second=0, microsecond=0).astimezone(UTC)
         while cursor < end:
             following = cursor + timedelta(hours=1)

@@ -150,7 +150,7 @@ The classifier has no Makefile target:
 The GPU runs were done through a separate assistant thread. It rents Verda GPU instances, uploads the data
 (symlinks dereferenced, since `yolo/` links into `data/`), runs the same `scripts/train.py` / `scripts/train_cls.py`
 command lines with a CUDA `--device`, copies each run back to `runs/verda/<task>/<name>/` and deletes the instances.
-There is no script for this in the repo.
+There is no script for this in the repo. Servers, workflow, costs and lessons: [VERDA.md](VERDA.md).
 
 ### Hyperparameters of the deployed runs (from each run's `args.yaml`)
 

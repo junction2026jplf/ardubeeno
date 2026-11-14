@@ -74,7 +74,7 @@ class Monitor:
                  models=None, cascade=None, cls_lo=None, cls_hi=None, bee_conf=None, bee_threads=2,
                  det_every=3, max_checks_frame=2, background=True, stream_fps=30, stream_width=None,
                  jpeg_quality=75, strong=None, crop_margin=None, match_iou=0.1, match_dist=1.5, lost_s=1.5,
-                 lost_runs=3, det_min_ms=0, oriented=False, cut=0.0):
+                 lost_runs=3, det_min_ms=0, oriented=False, cut=0.0, source_override=False):
         """None = from deploy.json, else DEFAULTS. models: a MODEL_SETS name (None: deploy.json's files, else
         c160-int8all); model/cls_model override single files.
         threads/bee_threads: onnxruntime threads per session (1-2 on the UNO Q; 4 is 2-3x slower there).
@@ -133,37 +133,56 @@ class Monitor:
         self.jpeg, self.jpeg_id, self.encoded, self.encode_ms, self.view_fps = None, 0, 0, deque(maxlen=100), 0.0
         self.stream_fps, self.stream_width, self.quality = stream_fps, stream_width, jpeg_quality
         threading.Thread(target=self.render_loop, daemon=True).start()
-        self.count, self.was_mite = 0, False
-        self.state = {"frames": 0, "mite": False, "count": 0}
-        revision = {"models": {Path(m).name: Path(m).stat().st_size for m in (model, cls_model, bee_model)
-                               if Path(m).exists()}, **self.settings()}
-        self.recorder = Recorder.from_env(source, revision)  # None: no uploads, as before
+        self.base_thresholds = (fuse_conf, o["cls_lo"], o["cls_hi"])
+        self.model_meta = {Path(m).name: Path(m).stat().st_size for m in (model, cls_model, bee_model)
+                           if Path(m).exists()}
+        self.source = source
+        revision = {"models": self.model_meta, **self.settings()}
+        self.recorder = Recorder.from_env(source, revision, source_override=source_override)
         if self.recorder:
+            self.source = self.recorder.source
             atexit.register(self.close)
+        self.closed = False
+        self.base_counts = dict(self.recorder.initial_counts) if self.recorder else {}
+        self.count, self.was_mite = self.base_counts.get("count", 0), False
+        self.state = {"frames": 0, "mite": False, **self.base_counts, "count": self.count,
+                      **self.settings(), **self.upload_state()}
 
     def configure(self, fuse_conf=None, window=None, min_hits=None, mode=None, min_bee_px=None):
+        changed_rev = any(x is not None for x in (fuse_conf, min_hits, min_bee_px))
         with self.cond:
             if mode in ("single", "multi"):
                 self.multi = mode == "multi" and self.counter is not None
+            if fuse_conf is not None:
+                v = float(fuse_conf)
+                base_f, base_lo, base_hi = self.base_thresholds
+                self.pipe.fuse_conf = v
+                if self.pipe.cascade:
+                    if abs(v - base_f) < 1e-6:
+                        self.pipe.cls_lo, self.pipe.cls_hi = base_lo, base_hi
+                    else:
+                        self.pipe.cls_lo = round(max(0.01, min(0.95, v - max(0.0, base_f - base_lo))), 3)
+                        self.pipe.cls_hi = round(min(0.99, max(base_hi, v + 0.15)), 3)
             if self.counter is not None:
                 if fuse_conf is not None:
-                    self.counter.mites.fuse_conf = float(fuse_conf)
+                    self.counter.mites.fuse_conf = self.pipe.fuse_conf
                 if min_hits is not None:
                     self.counter.min_hits = max(1, int(min_hits))
                 if min_bee_px is not None:
                     self.counter.min_bee_px = max(0, int(min_bee_px))
-            if fuse_conf is not None:
-                self.pipe.fuse_conf = float(fuse_conf)
             if window is not None:
                 self.recent = deque(self.recent, maxlen=max(1, int(window)))
             if min_hits is not None:
                 self.min_hits = max(1, int(min_hits))
-            return self.settings()
+            settings = self.settings()
+        if changed_rev and self.recorder:
+            self.recorder.update_revision({"models": self.model_meta, **settings})
+        return settings
 
     def settings(self):
         return {"fuse_conf": self.pipe.fuse_conf, "window": self.recent.maxlen, "min_hits": self.min_hits,
                 "classifier": self.pipe.cls is not None, "mode": "multi" if self.multi else "single",
-                "multi_available": self.counter is not None,
+                "multi_available": self.counter is not None, "source": getattr(self, "source", "field"),
                 "min_bee_px": self.counter.min_bee_px if self.counter else None,
                 "cascade": [self.pipe.cls_lo, self.pipe.cls_hi] if self.pipe.cascade else None,
                 "det_every": self.counter.det_every if self.counter else None,
@@ -203,19 +222,23 @@ class Monitor:
     def process_multi(self, frame, seq=None):
         """Find, track and check every bee in the frame."""
         h, w = frame.shape[:2]
-        with self.cond:  # configure() may change the counter's settings from another thread
+        with self.cond:  # configure(), reset_count() and close() synchronize on self.cond
+            if self.closed:
+                return False
             visible = self.counter.process(frame, seq)
             ended = self.counter.end_tracks()
-            counts = self.counter.counts(visible)
+            counts = self.counter.counts(visible, self.base_counts)
             gallery = self.counter.gallery_state()
             mite = any(self.counter.is_mite(t) for t in visible)
             bees = self.counter.overlay(visible)
             timing = self.counter.stats()
+            self.record(ended, True)
         self.tick(seq)
-        self.record(ended, True)
         self.publish(seq, bees=bees, label=f"bees {counts['bees_now']}  seen {counts['bees_seen']}  "
                                            f"mites {counts['count']}", color=RED if mite else GREEN)
         with self.cond:
+            if self.closed:
+                return mite
             self.frame_id += 1
             self.roi = frame
             self.state = {
@@ -229,15 +252,20 @@ class Monitor:
 
     def process_single(self, frame, seq=None):
         """Run the model on the frame's centre region; return the verdict aggregated over recent frames."""
+        with self.cond:
+            if self.closed:
+                return False
         h, w = frame.shape[:2]
         rw = min(w, round(h * ROI_ASPECT))
         x0 = (w - rw) // 2
         roi = frame[:, x0:x0 + rw]
         boxes, top, prob, fused, verdict = self.pipe(roi)
         self.tick(seq)
-        self.record([], False)  # no bee tracks: not recorded time
 
         with self.cond:
+            if self.closed:
+                return False
+            self.record([], False)  # no bee tracks: not recorded time
             self.recent.append(bool(verdict))
             hits = sum(self.recent)
             mite = hits >= min(self.min_hits, self.recent.maxlen)
@@ -336,38 +364,63 @@ class Monitor:
                     "encoded": self.encoded, "render_ms": round(ms[len(ms) // 2], 1) if ms else None}
 
     def record(self, ended, recording=None):
-        """Hand ended bee tracks and frame health to the outbox; outside the lock, never touches the database."""
-        recorder = self.recorder  # close() may set it to None from another thread
+        """Hand ended bee tracks and frame health to the outbox; enqueues in memory, never touches the database."""
+        recorder = self.recorder  # close() may set it to None
         if recorder:
+            if recording:
+                recorder.frame(True)
             for track_id, assessment, info in ended:
                 recorder.passage(track_id, assessment, info)
-            if recording is not None:
-                recorder.frame(recording)
+            if recording is False:
+                recorder.frame(False)
 
     def upload_state(self):
         recorder = self.recorder
         return {"upload": dict(recorder.status)} if recorder else {}
 
     def reset_count(self):
-        """Resets the counts on the page and the matrix. The bees being tracked are recorded as finished passages
-        first; recorded history, sequences and unsent events are untouched."""
-        ended = []
+        """Resets the displayed counts on the page and LED matrix without dropping in-flight tracks or manufacturing
+        unfinished passages; recorded history, sequences and unsent events remain intact."""
         with self.cond:
+            if self.closed:
+                return {"count": 0}
+            ended = []
             if self.counter is not None:
-                ended = self.counter.end_tracks(all=True)
-                self.counter.reset()
+                ended = self.counter.end_tracks(all=False)
+                self.counter.mark_reset()
+            self.base_counts = {}
             self.count = 0
-            self.state = {**self.state, "count": 0}
-        self.record(ended)
+            self.state = {**self.state, "bees_seen": 0, "bees_checked": 0, "bees_clean": 0,
+                          "bees_uncertain": 0, "count": 0, "gallery": []}
+            self.record(ended)
+            if self.recorder:
+                self.recorder.reset_baseline()
         return {"count": 0}
 
     def close(self):
-        """On shutdown: record the bees still tracked, close the coverage interval and commit."""
-        recorder, self.recorder = self.recorder, None
+        """On shutdown: finish pending checks, record confirmed bees (including those still in view), and drain."""
+        with self.cond:
+            if self.closed:
+                return
+            self.closed = True
+            recorder = self.recorder
         if recorder is None:
             return
+        if self.counter is not None:
+            deadline = time.monotonic() + 0.3
+            while True:
+                with self.cond:
+                    with self.counter.lock:
+                        done, self.counter.done = self.counter.done, []
+                    for t, crop, result in done:
+                        self.counter.check(t, crop, result)
+                    pending = any(t.pending for t in self.counter.leaving + self.counter.tracker.tracks if t.confirmed)
+                if not pending or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.02)
         with self.cond:
             ended = self.counter.end_tracks(all=True) if self.counter is not None else []
+            self.recorder = None
         for track_id, assessment, info in ended:
             recorder.passage(track_id, assessment, info)
         recorder.close()

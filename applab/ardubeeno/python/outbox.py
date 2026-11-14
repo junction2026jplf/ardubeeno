@@ -31,7 +31,7 @@ DATA = Path(__file__).parent.parent / "data"
 METHOD = "bee_tracks_v1"
 SOURCES = ("field", "screen_demo", "replay")
 BATCH, MAX_BODY = 100, 2 * 1024 * 1024
-COVERAGE_EVERY, HEARTBEAT_EVERY, FRAME_GAP = 30.0, 60.0, 5.0  # seconds; a longer pause in frames ends coverage
+COVERAGE_EVERY, HEARTBEAT_EVERY, FRAME_GAP = 15.0, 20.0, 5.0  # seconds; a longer pause in frames ends coverage
 LEASE = 120.0
 STOP = object()
 
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     state TEXT NOT NULL CHECK (state IN ('blocked_time', 'pending', 'leased', 'acked', 'quarantined')),
     attempts INTEGER NOT NULL DEFAULT 0, lease_owner TEXT, lease_until REAL, last_error TEXT, acked_at REAL);
 CREATE INDEX IF NOT EXISTS outbox_state ON outbox (state);
+CREATE TABLE IF NOT EXISTS local_meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 
@@ -144,7 +145,7 @@ class Recorder:
     """Records events durably on a writer thread and uploads them on an uploader thread."""
 
     @classmethod
-    def from_env(cls, source="field", revision=None):
+    def from_env(cls, source="field", revision=None, source_override=False):
         """A Recorder when the receiver is configured, else None (the app then runs without uploads)."""
         c = load_config()
         if not (c["server_url"] or c["device_id"] or c["device_token"]):
@@ -152,7 +153,7 @@ class Recorder:
         if not (c["server_url"] and c["device_id"] and c["device_token"]):
             print("upload off: set all of ARDUBEENO_SERVER_URL, ARDUBEENO_DEVICE_ID and ARDUBEENO_DEVICE_TOKEN")
             return None
-        source = c["source"] or source
+        source = source if (source_override and source) else (c["source"] or source)
         if source not in SOURCES:
             print(f"upload off: ARDUBEENO_SOURCE must be one of {', '.join(SOURCES)}")
             return None
@@ -164,15 +165,20 @@ class Recorder:
             return None
 
     def __init__(self, server_url, device_id, token, source, db_path, revision=None):
-        self.url = server_url.rstrip("/") + "/api/v1/ingest/batch"
+        self.server_url = server_url.rstrip("/")
+        self.url = self.server_url + "/api/v1/ingest/batch"
         self.device_id, self.token, self.source = device_id, token, source
         self.store = Store(db_path)
         self.session_id, self.boot = str(uuid.uuid4()), boot_id()
         self.trusted = clock_trusted()
         self.queue, self.wake, self.lock = queue.Queue(), threading.Event(), threading.Lock()
+        self.drain_cv, self.close_wake, self.stop_upload = threading.Condition(), threading.Event(), threading.Event()
+        self.drain_gen, self.drained_gen = 0, -1
+        self.closing, self.close_failed = False, False
         self.cov_start, self.last_frame, self.recording = None, None, False
-        self.status = {"enabled": True, "device_id": device_id, "source": source, "session_id": self.session_id,
-                       "fault": None, "unrecorded": 0, "last_ack": None, "failures": 0}
+        self.status = {"enabled": True, "server_url": self.server_url, "device_id": device_id, "source": source,
+                       "session_id": self.session_id, "fault": None, "unrecorded": 0, "last_ack": None,
+                       "failures": 0, "upload_error": None}
         self.db = self.store.connect()
         with self.db as db:
             db.execute("INSERT INTO sessions VALUES (?,?,?,?,?,?,?,1,NULL)",
@@ -180,11 +186,39 @@ class Recorder:
                         json.dumps(revision) if revision else None))
             if self.trusted:
                 self.anchor(db)
+        self.initial_counts = self._read_baseline_counts(self.db.db)
+        self.refresh()
         self.writer = threading.Thread(target=self.write_loop, name="outbox-writer", daemon=True)
         self.uploader = threading.Thread(target=self.upload_loop, name="outbox-uploader", daemon=True)
         self.writer.start()
         self.uploader.start()
-        print(f"uploading to {server_url} as {device_id} ({source}), history in {db_path}")
+        print(f"uploading to {self.server_url} as {device_id} ({source}), history in {db_path}")
+
+    def _baseline_key(self):
+        return f"baseline_rowid:{self.source}"
+
+    def _read_baseline_counts(self, db):
+        row = db.execute("SELECT value FROM local_meta WHERE key=?", (self._baseline_key(),)).fetchone()
+        base_rowid = int(row[0]) if row and str(row[0]).isdigit() else 0
+        rows = db.execute("SELECT value, info FROM local_events WHERE kind='bee_passage' AND source=? AND rowid>?",
+                          (self.source, base_rowid)).fetchall()
+        seen = mites = clean = checked = 0
+        for v, raw in rows:
+            try:
+                meta = json.loads(raw) if raw else {}
+            except (ValueError, TypeError):
+                meta = {}
+            if meta.get("pre_reset"):
+                continue
+            seen += 1
+            mites += v == "mites_detected"
+            clean += v == "not_detected"
+            try:
+                checked += int(meta.get("checks", 0)) > 0
+            except (ValueError, TypeError):
+                pass
+        return {"bees_seen": seen, "bees_checked": checked, "bees_clean": clean,
+                "bees_uncertain": seen - mites - clean, "count": mites}
 
     # --- called from the camera loop: cheap, never touch the database ---
 
@@ -201,18 +235,64 @@ class Recorder:
             self.last_frame, self.recording = now, recording
 
     def passage(self, track_id, assessment, info):
-        self.queue.put(("bee_passage", time.monotonic(), {"track_id": track_id, "value": assessment, "info": info}))
-
-    def close(self, timeout=10):
-        """Close the open coverage interval, record an idle heartbeat and wait for the writer to commit."""
         now = time.monotonic()
         with self.lock:
+            if self.cov_start is not None and self.status["fault"] != "storage" and now >= self.cov_start:
+                end = now + 0.001  # half-open [start, end) on the server includes this passage immediately
+                self.queue.put(("coverage", end, {"start": self.cov_start}))
+                self.cov_start = end
+        self.queue.put(("bee_passage", now, {"track_id": track_id, "value": assessment, "info": info}))
+
+    def reset_baseline(self):
+        """Advance the local display baseline without deleting events or resetting sequences."""
+        self.queue.put(("reset_baseline", time.monotonic(), {}))
+
+    def update_revision(self, revision):
+        self.queue.put(("revision", time.monotonic(), {"revision": revision}))
+
+    def _wait_drain(self, deadline):
+        rem = deadline - time.monotonic()
+        if rem <= 0.05:
+            return
+        with self.drain_cv:
+            self.drain_gen += 1
+            target = self.drain_gen
+        self.close_wake.set()
+        self.wake.set()
+        with self.drain_cv:
+            self.drain_cv.wait_for(
+                lambda: self.drained_gen >= target or self.close_failed or self.stop_upload.is_set(),
+                timeout=rem,
+            )
+
+    def close(self, timeout=10, drain=3.0):
+        """Close coverage, drain pending passages/coverage if reachable, then commit and send an idle heartbeat."""
+        deadline = time.monotonic() + drain
+        now = time.monotonic()
+        self.closing = True
+        with self.lock:
+            self.recording = False
             if self.cov_start is not None:
-                self.queue.put(("coverage", min(now, self.last_frame + FRAME_GAP), {"start": self.cov_start}))
+                end = min(now, (self.last_frame or now) + FRAME_GAP)
+                if end > self.cov_start:
+                    self.queue.put(("coverage", end, {"start": self.cov_start}))
                 self.cov_start = None
-        self.queue.put(("heartbeat", now, {"value": "idle"}))
+        committed = threading.Event()
+        self.queue.put(("barrier", now, {"event": committed}))
+        committed.wait(timeout)
+
+        self._wait_drain(deadline)
+
+        self.queue.put(("heartbeat", time.monotonic(), {"value": "idle"}))
         self.queue.put(STOP)
         self.writer.join(timeout)
+
+        if not self.close_failed:
+            self._wait_drain(deadline)
+        self.stop_upload.set()
+        self.close_wake.set()
+        self.wake.set()
+        self.uploader.join(0.5)
 
     # --- writer thread ---
 
@@ -240,7 +320,7 @@ class Recorder:
                 if not self.trusted and clock_trusted():
                     self.write(self.seal_blocked)
                 self.refresh()
-            if now >= next_beat:
+            if now >= next_beat and not self.closing:
                 next_beat = now + HEARTBEAT_EVERY
                 self.heartbeat()
 
@@ -269,6 +349,18 @@ class Recorder:
 
     def record(self, kind, mono, d):
         """Allocate the sequence, insert the event (+ track mapping) and its outbox row in one transaction."""
+        if kind == "barrier":
+            d["event"].set()
+            return
+        if kind == "reset_baseline":
+            self.write(lambda db: db.execute(
+                "INSERT INTO local_meta VALUES (?, COALESCE((SELECT CAST(MAX(rowid) AS TEXT) FROM local_events), '0')) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (self._baseline_key(),)))
+            return
+        if kind == "revision":
+            self.write(lambda db: db.execute("UPDATE sessions SET revision=? WHERE session_id=?",
+                                             (json.dumps(d["revision"]), self.session_id)))
+            return
         if kind == "coverage" and mono - d["start"] < 0.001:
             return
 
@@ -295,6 +387,7 @@ class Recorder:
                 self.seal(db, event_id, time.time() - time.monotonic())
 
         if self.write(tx):
+            self.refresh()
             self.wake.set()
 
     def seal(self, db, event_id, offset):
@@ -351,19 +444,26 @@ class Recorder:
     def upload_loop(self):
         db = self.store.connect()
         delay, size, failing = 0.0, BATCH, False
-        while True:
-            if delay:  # backing off: new events do not shorten the wait
-                time.sleep(delay)
+        while not self.stop_upload.is_set():
+            if delay and not self.closing:  # backing off: new events do not shorten the wait, except final drain
+                self.close_wake.wait(delay)
             else:
-                self.wake.wait(30)
+                self.wake.wait(0.2 if self.closing else 30)
+            if self.stop_upload.is_set():
+                return
             self.wake.clear()
-            while True:
+            while not self.stop_upload.is_set():
+                with self.drain_cv:
+                    gen = self.drain_gen
                 result, sent = self.upload_once(db, size)
                 if result == "empty":
                     delay, size = 0.0, BATCH
+                    with self.drain_cv:
+                        self.drained_gen = max(self.drained_gen, gen)
+                        self.drain_cv.notify_all()
                     break
                 if result == "ok":
-                    if failing:  # back online: a fresh heartbeat goes with the backlog
+                    if failing and not self.closing:  # back online: a fresh heartbeat goes with the backlog
                         self.heartbeat()
                     delay, failing, self.status["failures"] = 0.0, False, 0
                     self.status["upload_error"] = None
@@ -379,6 +479,11 @@ class Recorder:
                     continue
                 if isinstance(result, float):  # transient: exponential backoff with jitter or Retry-After
                     delay = result
+                if self.closing:
+                    with self.drain_cv:
+                        self.close_failed = True
+                        self.drain_cv.notify_all()
+                    return
                 break
 
     def upload_once(self, db, size):
@@ -407,7 +512,7 @@ class Recorder:
             "Content-Type": "application/json", "Authorization": "Bearer " + self.token})
         status, detail, ack, retry_after = None, "", None, ""
         try:
-            with urlopen(request, timeout=20) as response:
+            with urlopen(request, timeout=2.5 if self.closing else 20) as response:
                 status, ack = response.status, json.loads(response.read())
         except HTTPError as e:
             status, detail = e.code, e.read()[:500].decode("utf-8", "replace")
@@ -430,7 +535,8 @@ class Recorder:
                     d.executemany("UPDATE outbox SET state='acked', acked_at=?, lease_owner=NULL, lease_until=NULL, "
                                   "last_error=NULL WHERE event_id=?", [(time.time(), i) for i in ids])
                 self.status["last_ack"] = stamp(time.time())
-                self.status.update(pending=max(0, self.status.get("pending", 0) - len(ids)))
+                self.status.update(pending=max(0, self.status.get("pending", 0) - len(ids)),
+                                   acked=self.status.get("acked", 0) + len(ids))
                 return "ok", len(ids)
             detail = "invalid acknowledgement"
         if status in (409, 413, 422) and len(ids) > 1:

@@ -105,6 +105,8 @@ def main():
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--mode", choices=["auto", "multi", "single"], default="auto",
                    help="multi: every bee in the frame (needs bees.onnx); single: one bee in the centre region")
+    p.add_argument("--source", choices=["field", "screen_demo", "replay"],
+                   help="event source tag for history uploads (default: replay for video files, else field)")
     p.add_argument("--min-bee-px", type=int, default=100, help="smaller bees are counted but not checked for mites")
     p.add_argument("--models", choices=list(MODEL_SETS),
                    help="mite detector + classifier set (default: deploy.json's files, else c160-int8all)")
@@ -166,7 +168,8 @@ def main():
 
     is_file = not (args.camera == "auto" or args.camera.isdigit() or args.camera.startswith("/dev/video"))
     monitor = Monitor(fuse_conf=args.fuse_conf, window=args.window, min_hits=args.min_hits, threads=args.threads,
-                      mode=args.mode, min_bee_px=args.min_bee_px, source="replay" if is_file else "field",
+                      mode=args.mode, min_bee_px=args.min_bee_px,
+                      source=args.source or ("replay" if is_file else "field"), source_override=bool(args.source),
                       models=args.models, model=args.model, cls_model=args.cls_model, cascade=args.cascade,
                       cls_lo=args.cls_lo, cls_hi=args.cls_hi, bee_model=args.bee_model, bee_conf=args.bee_conf,
                       bee_threads=args.bee_threads, det_every=args.det_every, max_checks_frame=args.max_checks,

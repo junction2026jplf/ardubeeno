@@ -113,6 +113,7 @@ demo/start-receiver.sh         # receiver + dashboard on port 8000, all interfac
 ## Documentation
 
 - [docs/TRAINING.md](docs/TRAINING.md): data, models, training, evaluation, export
+- [docs/VERDA.md](docs/VERDA.md): the Verda GPU servers used for training, workflow and costs
 - [applab/ardubeeno/README.md](applab/ardubeeno/README.md): the board app, its settings and speed
 - [dashboard/README.md](dashboard/README.md): receiver and dashboard; [docs/mite-device-outbox.md](docs/mite-device-outbox.md): upload contract
 - [docs/deploy-plan.md](docs/deploy-plan.md), [docs/demo-script.md](docs/demo-script.md),

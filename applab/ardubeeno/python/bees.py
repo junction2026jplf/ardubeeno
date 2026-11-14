@@ -35,7 +35,7 @@ import cv2
 from device_check import ROI_ASPECT, Detector, Pipeline
 from orient import crop_bee_oriented
 
-RED, GREEN, GREY = (40, 40, 230), (60, 180, 60), (160, 160, 160)
+RED, GREEN, AMBER, GREY = (40, 40, 230), (60, 180, 60), (30, 165, 230), (160, 160, 160)
 CROP_W, CROP_H = 160, 280  # the training crops' size
 CROP_MARGIN = 0.15  # context around the bee box in the crop, for the current bee detector's box tightness
 
@@ -96,6 +96,7 @@ class Track:
         self.anchor, self.t0, self.seen = box, t, now  # last detected box, its frame number and time (s)
         self.v = (0.0, 0.0)  # pixels per camera frame (exponential moving average over the detections)
         self.pending = False  # a crop of this bee waits for or is in the mite check
+        self.pre_reset = False  # confirmed before a local display reset: still finalized once, hidden from new totals
 
     @property
     def size(self):
@@ -280,10 +281,20 @@ class BeeCounter:
                                motion=self.motion)
         if old:  # track IDs stay unique for the whole run: each one is at most one bee passage
             self.tracker.next_id, self.tracker.t = old.next_id, old.t
+        self.observed_base = 0
         self.finished = []  # confirmed tracks that ended, until taken by end_tracks()
         self.leaving = []  # confirmed tracks that ended while a crop of them was in the mite check
-        self.gone_checked, self.gone_mites = 0, 0
+        self.gone_checked = self.gone_clean = self.gone_uncertain = self.gone_mites = 0
         self.gallery = OrderedDict()  # track id -> track, most recently checked last
+
+    def mark_reset(self):
+        """Zero the board's displayed counts without dropping in-flight tracks (so visible bees aren't counted twice)."""
+        for t in self.tracker.tracks + self.leaving:
+            if t.confirmed:
+                t.pre_reset = True
+        self.observed_base = self.tracker.observed
+        self.gone_checked = self.gone_clean = self.gone_uncertain = self.gone_mites = 0
+        self.gallery.clear()
 
     @property
     def strong_score(self):
@@ -295,8 +306,11 @@ class BeeCounter:
     def is_mite(self, t):
         return t.strong or t.positives >= self.min_hits
 
+    def is_clean(self, t, min_clean_checks=2):
+        return not self.is_mite(t) and t.checks >= min_clean_checks and t.positives == 0
+
     def status(self, t):
-        return "mite" if self.is_mite(t) else "clean" if t.checks else "unchecked"
+        return "mite" if self.is_mite(t) else "clean" if self.is_clean(t) else "uncertain" if t.checks else "unchecked"
 
     def assessment(self, t, min_clean_checks=2):
         """The bee passage's verdict: mites_detected at min_hits positive checks or one strong positive check,
@@ -304,18 +318,27 @@ class BeeCounter:
         some positives) uncertain."""
         if self.is_mite(t):
             return "mites_detected"
-        return "not_detected" if t.checks >= min_clean_checks and t.positives == 0 else "uncertain"
+        return "not_detected" if self.is_clean(t, min_clean_checks) else "uncertain"
 
     def end_tracks(self, all=False):
         """Take the confirmed tracks that ended since the last call, each once; all=True also ends those still
-        tracked or waiting for a mite check (before a reset or at shutdown)."""
-        ended, self.finished = self.finished, []
+        tracked or waiting for a mite check (e.g. at shutdown, marked interrupted)."""
+        ended = [(t, False) for t in self.finished]
+        self.finished = []
         if all:
-            ended += self.leaving + [t for t in self.tracker.tracks if t.confirmed]
+            in_view = self.leaving + [t for t in self.tracker.tracks if t.confirmed]
+            ended += [(t, True) for t in in_view]
             self.leaving = []
-        return [(t.id, self.assessment(t), {"checks": t.checks, "positives": t.positives, "strong": t.strong,
-                                            "hits": t.hits, "score": round(t.best_score, 3),
-                                            "min_hits": self.min_hits}) for t in ended]
+            self.tracker.tracks = [t for t in self.tracker.tracks if not t.confirmed]
+        out = []
+        for t, interrupted in ended:
+            info = {"checks": t.checks, "positives": t.positives, "strong": t.strong,
+                    "hits": t.hits, "score": round(t.best_score, 3),
+                    "min_hits": self.min_hits, "pre_reset": t.pre_reset}
+            if interrupted:
+                info["interrupted"] = True
+            out.append((t.id, self.assessment(t), info))
+        return out
 
     def scene_cut(self, frame):
         """End every track when the whole picture changed since the last detection (a new slide): without this, the
@@ -336,8 +359,11 @@ class BeeCounter:
 
     def finish(self, t):
         """A confirmed track ended: its verdict stays in the totals and it becomes a passage."""
-        self.gone_checked += t.checks > 0
-        self.gone_mites += self.is_mite(t)
+        if not t.pre_reset:
+            self.gone_checked += t.checks > 0
+            self.gone_mites += self.is_mite(t)
+            self.gone_clean += self.is_clean(t)
+            self.gone_uncertain += (not self.is_mite(t) and not self.is_clean(t))
         self.finished.append(t)
 
     def checkable(self, box, w, h, edge=2):
@@ -426,14 +452,18 @@ class BeeCounter:
             return
         t.checks += 1
         t.positives += bool(verdict)
-        t.strong = t.strong or bool(verdict and fused >= self.strong_score)
+        if self.strong is None and self.mites.cascade and prob is not None:
+            is_strong = bool(verdict and (prob >= self.mites.cls_hi or fused >= self.mites.fuse_conf + 0.25))
+        else:
+            is_strong = bool(verdict and fused >= self.strong_score)
+        t.strong = t.strong or is_strong
         if fused > t.best_score:
             out = crop.copy()
             for x, y, bw, bh, s in boxes:
                 cv2.rectangle(out, (int(x), int(y)), (int(x + bw), int(y + bh)), RED, 2)
                 cv2.putText(out, f"{s:.2f}", (int(x), max(int(y) - 4, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, RED, 1)
             t.best_score, t.best_jpeg = fused, cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes()
-        if t.confirmed:
+        if t.confirmed and not t.pre_reset:
             self.list(t)
         if leaving:  # the bee left during its check: now it is a passage
             self.leaving.remove(t)
@@ -474,7 +504,7 @@ class BeeCounter:
                 elif t.confirmed:
                     self.finish(t)
             for t in visible:  # checked before it was confirmed
-                if t.checks and not t.listed:
+                if t.checks and not t.listed and not t.pre_reset:
                     self.list(t)
         else:  # the boxes move on by their velocity
             self.tracker.predict(self.seq)
@@ -501,14 +531,21 @@ class BeeCounter:
 
     def overlay(self, visible):
         """What the stream draws for each visible bee: (box, velocity in px per camera frame, ID, color)."""
-        colors = {"mite": RED, "clean": GREEN, "unchecked": GREY}
+        colors = {"mite": RED, "clean": GREEN, "uncertain": AMBER, "unchecked": GREY}
         return [(tuple(t.box[:4]), t.v if self.motion else (0.0, 0.0), t.id, colors[self.status(t)]) for t in visible]
 
-    def counts(self, visible):
-        tracks = [t for t in self.tracker.tracks if t.confirmed] + self.leaving
-        return {"bees_now": len(visible), "bees_seen": self.tracker.observed,
-                "bees_checked": self.gone_checked + sum(t.checks > 0 for t in tracks),
-                "count": self.gone_mites + sum(self.is_mite(t) for t in tracks)}
+    def counts(self, visible, base=None):
+        b = base or {}
+        tracks = [t for t in self.tracker.tracks + self.leaving if t.confirmed and not t.pre_reset]
+        return {
+            "bees_now": len(visible),
+            "bees_seen": b.get("bees_seen", 0) + (self.tracker.observed - self.observed_base),
+            "bees_checked": b.get("bees_checked", 0) + self.gone_checked + sum(t.checks > 0 for t in tracks),
+            "bees_clean": b.get("bees_clean", 0) + self.gone_clean + sum(self.is_clean(t) for t in tracks),
+            "bees_uncertain": b.get("bees_uncertain", 0) + self.gone_uncertain + sum(
+                not self.is_mite(t) and not self.is_clean(t) for t in tracks),
+            "count": b.get("count", 0) + self.gone_mites + sum(self.is_mite(t) for t in tracks),
+        }
 
     def settings(self):
         """The tracking and verdict settings, for the page and the passage revision."""

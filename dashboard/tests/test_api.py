@@ -149,6 +149,37 @@ class ReceivingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/v1/devices/uno-q-01/history", params={**params, "tz": "Not/AZone"}).status_code, 422)
         self.assertEqual(self.client.get("/api/v1/devices/missing/status").status_code, 404)
 
+    def test_five_minute_buckets_not_detected_counts_sources_and_live_stream(self):
+        devices = {"uno-q-01": {"token": "a-valid-device-secret", "name": "Hive 01",
+                                "timezone": "Europe/Helsinki", "live_url": "http://169.254.100.2:7000"}}
+        client = TestClient(create_app(self.path, devices))
+        self.addCleanup(client.close)
+        cov = self.event("coverage", source="screen_demo", start_at="2026-11-13T10:00:00Z",
+                         end_at="2026-11-13T10:10:00Z", occurred_at="2026-11-13T10:10:00Z")
+        clean = self.event(source="screen_demo", assessment="not_detected", occurred_at="2026-11-13T10:02:00Z")
+        uncertain = self.event(source="screen_demo", assessment="uncertain", occurred_at="2026-11-13T10:03:00Z")
+        mite = self.event(source="screen_demo", assessment="mites_detected", occurred_at="2026-11-13T10:07:00Z")
+        self.assertEqual(self.upload(cov, clean, uncertain, mite, client=client).status_code, 200)
+
+        res = client.get("/api/v1/devices/uno-q-01/history", params={
+            "from": "2026-11-13T10:00:00Z", "to": "2026-11-13T10:15:00Z", "bucket": "5m", "source": "screen_demo",
+        }).json()
+        self.assertEqual(len(res["buckets"]), 3)
+        self.assertEqual([b["bees_observed"] for b in res["buckets"]], [2, 1, None])
+        self.assertEqual(res["summary"]["bees_not_detected"], 1)
+        self.assertEqual(res["summary"]["bees_assessment_uncertain"], 1)
+        self.assertEqual(res["summary"]["bees_with_detected_mites"], 1)
+
+        st = client.get("/api/v1/devices/uno-q-01/status").json()
+        self.assertEqual(st["active_source"], "screen_demo")
+        self.assertIn("screen_demo", st["sources"])
+        self.assertEqual(st["live_url"], "http://169.254.100.2:7000")
+
+        sse = client.get("/api/v1/stream", params={"once": "true"})
+        self.assertEqual(sse.status_code, 200)
+        self.assertIn("event: connected", sse.text)
+        self.assertIn('"seq":1', sse.text)
+
 
 if __name__ == "__main__":
     unittest.main()

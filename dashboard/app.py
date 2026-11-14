@@ -1,4 +1,6 @@
 """HTTP adapter for durable device uploads and the read-only dashboard."""
+import asyncio
+from contextlib import asynccontextmanager
 import csv
 import hmac
 import io
@@ -6,12 +8,13 @@ import json
 import os
 import re
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .models import Batch, UTC
@@ -63,10 +66,73 @@ def load_devices():
                 raise ValueError
             if not isinstance(config.get("name"), str) or not config["name"]:
                 raise ValueError
+            if config.get("live_url") is not None and (
+                not isinstance(config["live_url"], str) or not config["live_url"].startswith(("http://", "https://"))
+            ):
+                raise ValueError
             ZoneInfo(config["timezone"])
         return devices
     except (ValueError, TypeError, KeyError, ZoneInfoNotFoundError) as exc:
         raise ValueError("Invalid ARDUBEENO_DEVICES_JSON: each device needs a name, IANA timezone and token of at least 16 characters") from exc
+
+
+class LiveHub:
+    """Thread-safe pub/sub notifying open dashboard browsers via SSE as soon as a batch commits."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._seq = 0
+        self._subscribers = set()
+        self._closed = False
+
+    @property
+    def seq(self):
+        with self._lock:
+            return self._seq
+
+    def subscribe(self, loop):
+        queue = asyncio.Queue(maxsize=32)
+        with self._lock:
+            if self._closed:
+                queue.put_nowait(None)
+            else:
+                self._subscribers.add((loop, queue))
+        return queue
+
+    def unsubscribe(self, loop, queue):
+        with self._lock:
+            self._subscribers.discard((loop, queue))
+
+    @staticmethod
+    def _push(queue, item):
+        if queue.full():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        queue.put_nowait(item)
+
+    def publish(self, payload):
+        with self._lock:
+            self._seq += 1
+            event = {"seq": self._seq, **payload}
+            subs = list(self._subscribers)
+        for loop, queue in subs:
+            try:
+                loop.call_soon_threadsafe(self._push, queue, event)
+            except RuntimeError:
+                pass
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            subs = list(self._subscribers)
+            self._subscribers.clear()
+        for loop, queue in subs:
+            try:
+                loop.call_soon_threadsafe(self._push, queue, None)
+            except RuntimeError:
+                pass
 
 
 def query_time(value):
@@ -84,9 +150,19 @@ def query_time(value):
 def create_app(db_path=None, devices=None):
     devices = load_devices() if devices is None else devices
     store = Store(db_path or os.environ.get("ARDUBEENO_DB", "dashboard/var/dashboard.sqlite3"))
-    app = FastAPI(title="ArduBeeno receiving API", version="1.0.0")
+    hub = LiveHub()
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            hub.close()
+
+    app = FastAPI(title="ArduBeeno receiving API", version="1.0.0", lifespan=lifespan)
     app.add_middleware(BodyLimit)
     app.state.store = store
+    app.state.hub = hub
 
     @app.exception_handler(sqlite3.Error)
     async def storage_failure(request, exc):
@@ -112,9 +188,46 @@ def create_app(db_path=None, devices=None):
         if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
             raise HTTPException(401, "Invalid device credentials", headers={"WWW-Authenticate": "Bearer"})
         try:
-            return store.ingest(batch)
+            result = store.ingest(batch)
         except Conflict as exc:
             raise HTTPException(409, str(exc)) from exc
+        hub.publish({
+            "schema_version": 1,
+            "device_id": batch.device_id,
+            "inserted": result["inserted"],
+            "duplicates": result["duplicates"],
+            "received_at": result["received_at"],
+            "sources": sorted({e.source for e in batch.events}),
+            "kinds": sorted({e.kind for e in batch.events}),
+        })
+        return result
+
+    @app.get("/api/v1/stream")
+    async def stream(request: Request, once: bool = False):
+        loop = asyncio.get_running_loop()
+        queue = hub.subscribe(loop)
+
+        async def events():
+            try:
+                yield f"event: connected\ndata: {json.dumps({'schema_version': 1, 'seq': hub.seq}, separators=(',', ':'))}\n\n"
+                if once:
+                    return
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+                        continue
+                    if item is None:
+                        return
+                    yield f"event: ingest\ndata: {json.dumps(item, separators=(',', ':'))}\n\n"
+            finally:
+                hub.unsubscribe(loop, queue)
+
+        return StreamingResponse(events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"})
 
     @app.get("/api/v1/devices")
     def list_devices(response: Response):
@@ -136,7 +249,7 @@ def create_app(db_path=None, devices=None):
             ZoneInfo(zone)
         except (ZoneInfoNotFoundError, ValueError):
             raise HTTPException(422, "Unknown IANA timezone")
-        if bucket not in {"hour", "day"} or source not in {"field", "screen_demo", "replay"}:
+        if bucket not in {"5m", "hour", "day"} or source not in {"field", "screen_demo", "replay"}:
             raise HTTPException(422, "Unsupported bucket or source")
         if method != "bee_tracks_v1":
             raise HTTPException(422, "Unsupported measurement method")
@@ -156,9 +269,10 @@ def create_app(db_path=None, devices=None):
                tz: str | None = None, bucket: str = "day", source: str = "field", method: str = "bee_tracks_v1"):
         result = history_result(device_id, start, end, tz, bucket, source, method)
         output = io.StringIO(newline="")
-        columns = ["start", "end", "label", "bees_observed", "bees_with_detected_mites", "bees_assessment_uncertain",
-                   "recorded_seconds", "requested_seconds", "events_outside_coverage", "rate_available", "availability", "coverage", "source", "method", "timezone", "device_id"]
-        writer = csv.DictWriter(output, columns)
+        columns = ["start", "end", "label", "bees_observed", "bees_with_detected_mites", "bees_not_detected",
+                   "bees_assessment_uncertain", "recorded_seconds", "requested_seconds", "events_outside_coverage",
+                   "rate_available", "availability", "coverage", "source", "method", "timezone", "device_id"]
+        writer = csv.DictWriter(output, columns, extrasaction="ignore")
         writer.writeheader()
         for row in result["buckets"]:
             row = {**row, "source": source, "method": method, "timezone": result["timezone"], "device_id": device_id}
