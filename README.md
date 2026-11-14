@@ -5,6 +5,10 @@ beehive. It watches the bees walk in and out, checks every single one for Varroa
 bees it saw, and how many of them carried a mite. It does all of this by itself, on the spot, without sending
 pictures anywhere and without needing the internet.
 
+![The ArduBeeno setup: a USB camera and the Arduino UNO Q on a USB hub, with the live page on the laptop](docs/images/setup.jpg)
+*Our test setup: the USB camera (left) and the Arduino UNO Q (front) on a USB hub. The laptop shows the board's live
+page while a bee picture on a phone is held in front of the camera.*
+
 Built in one weekend at Junction 2026 (track "The Green European Renaissance", challenge "Best use of Arduino Uno Q")
 by a team from 42 Heilbronn.
 
@@ -39,6 +43,15 @@ running picture of the colony's health without opening the hive and without harm
      mite), the counts, and close-ups of the checked bees with the mite marked.
    - **A dashboard** on a laptop or server (optional) shows bees and mites over hours and days. If the connection
      drops, the board keeps its own record and sends it once it is back.
+
+![The live page: camera picture with a red frame around a bee, the counts below, close-ups of the checked bees on the right](docs/images/live-page.jpg)
+*The live page from the board. The bee in the red frame was judged infested; below are the counts (bees in view,
+bees observed, bees checked, bees with mites), on the right the close-ups of the latest checked bees with their mite
+score (red: mite, green: clean).*
+
+![The dashboard: bees observed, bees with mites, passages per hour and recording coverage, with a chart over the last hour](docs/images/dashboard.jpg)
+*The dashboard on the laptop: everything the board recorded in the last hour, in 5-minute steps. Green: no mite,
+amber: uncertain, red: with mites. Striped bars mark times when the board recorded only part of the time.*
 
 The "looking" is done by small artificial-intelligence models that we trained on thousands of bee pictures: some with
 mites, some without. They are small enough to run on the board itself, so no picture ever leaves the hive.
