@@ -56,7 +56,7 @@ or as environment variables in App Lab):
   with its own files (so `deployed` keeps them); the other sets use 0.38 / 0.31 / 0.60. `--fuse-conf`, `--cls-lo`,
   `--cls-hi` (or the page) override either.
 - **Optional, off by default** (the defaults are the settings confirmed on the board): `--orient` / `ORIENT=1` turns
-  diagonal bees upright for the mite check (orient.py); `--cut 15` / `CUT=15` ends all tracks when a new slide of the
+  diagonal bees upright for the mite check (orient.py); `--cut 12` / `CUT=12` ends all tracks when a new slide of the
   tile slideshow appears, so bees at the same spots aren't merged across slides. `bees_n416synthft` (export/bees/, with
   its bees.json margin 0.21) finds rotated bees, but tracked less steadily on the board than `bees_n416cam`.
 - **Threads**: 2 per model (`--threads`, `--bee-threads`, `THREADS`, `BEE_THREADS`); 4 is 2-3x slower on the board.
@@ -76,6 +76,8 @@ or as environment variables in App Lab):
    devices), open App Lab, pick **ArduBeeno Varroa** under My Apps and press Run.
    On the first start, `onnxruntime` is installed from `python/requirements.txt`, which takes a minute.
 4. Open the app's page: App Lab shows the link when the app runs, or open `http://<board-ip>:7000` on your laptop.
+   Over a direct cable the board's name (e.g. `ardu-bee-no.local`) is more reliable than its 169.254.x.x address,
+   which a Mac may route over Wi-Fi instead.
 
 Another camera: set the `CAMERA` environment variable in the app, e.g. `csi:0` or `/dev/video2` (default `usb:0`).
 
@@ -102,7 +104,7 @@ the camera offers: `ssh arduino@<board-ip> 'v4l2-ctl -d /dev/video2 --list-ctrls
 
 **Save this frame** in the page writes the cyan region, without drawings, to `captures/` in the app folder.
 Label a few hundred of those from your own hive camera (mite / clean) to recalibrate the threshold
-(`device_check.py calibrate`) or to fine-tune the model. See `RESULTS.md`, "On a new camera".
+(`device_check.py calibrate`) or to fine-tune the model. See [docs/RESULTS.md](../../docs/RESULTS.md), "On a new camera".
 
 ## Files
 

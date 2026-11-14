@@ -5,7 +5,7 @@ cloud connection. The board finds and tracks bees, runs a small mite classifier 
 shows the result on its LED matrix and a web page, and queues the events for an optional local dashboard.
 
 Built at Junction 2026 (track "The Green European Renaissance", challenge "Best use of Arduino Uno Q") by a team
-from 42 Heilbronn. The demo films bee images on a laptop screen; it has not been tested at a real hive yet.
+from 42 Heilbronn. So far it has been tested on bee images filmed off a laptop screen, not at a real hive.
 
 ```
 USB camera (1280x720)
@@ -26,7 +26,7 @@ bee = MITE after 2 positive checks --> LED matrix, web page :7000, outbox --> re
 
 ## Results
 
-Numbers from `RESULTS.md`, `export/deploy/deploy.json` and `docs/demo-script.md`. Thresholds are chosen on val
+Numbers from [docs/RESULTS.md](docs/RESULTS.md) and `export/deploy/deploy.json`. Thresholds are chosen on val
 and applied once to test; the test videos are not used anywhere else.
 
 | Measure | Value |
@@ -40,7 +40,7 @@ and applied once to test; the test videos are not used anywhere else.
 | On the board: mite check per bee / bee detector per frame | ~140-165 ms / ~0.5 s |
 
 Main limit: mites under a wing (recall about 0.55-0.65, against about 0.95 for visible mites). Bigger classifiers
-(ConvNeXt, DINOv2) did not do better; more and better-matched data is the next step. Details in `RESULTS.md`.
+(ConvNeXt, DINOv2) did not do better; more and better-matched data is the next step. Details in [docs/RESULTS.md](docs/RESULTS.md).
 
 ## Repo layout
 
@@ -49,14 +49,13 @@ Main limit: mites under a wing (recall about 0.55-0.65, against about 0.95 for v
 | `applab/ardubeeno/` | The Arduino App Lab app: Python (`main.py`, `serve.py`, `monitor.py`, `bees.py`, `outbox.py`), web page, LED-matrix sketch |
 | `dashboard/` | Receiver API (FastAPI + SQLite) and dashboard for the board's events, with tests |
 | `scripts/` | Data conversion, training, evaluation, ONNX export and quantization, screen recording, laptop tools |
-| `demo/` | `start-receiver.sh`; the local `*.env` config files and demo images are not in git |
-| `docs/` | Training notes, deploy plan, demo script and checklist, device outbox contract, dashboard design draft |
-| `RESULTS.md` | All experiments and measurements |
+| `demo/` | `start-receiver.sh`; the local `*.env` config files are not in git |
+| `docs/` | Results, training, Verda GPUs, uploads (see Documentation) |
 | `Makefile` | Entry points (`make help`) |
 
 ## Not in this repo
 
-- `data/`: the Varroa bee-crop dataset (see Data and models below).
+- `data/`: the [VarroaDataset](https://zenodo.org/records/4085044) bee crops (see Data and models below).
 - `datasets/`: bee-detector datasets (BEEHIVE, Mendeley landing boards, camera recordings, synthetic bees, COCO
   negatives) and their download/convert helpers.
 - `runs/` (training runs), `export/` (ONNX models, `deploy.json`), `captures/` (recordings), `yolo*/` and
@@ -72,7 +71,7 @@ Needs [uv](https://docs.astral.sh/uv/), Python 3.12, and for training a Mac (`DE
 make setup                     # .venv with requirements.txt (ultralytics, onnxruntime, opencv, ...)
 ```
 
-**Data.** Put the Varroa bee-crop dataset in `data/{train,val,test}/`, each with `gt_one.csv` (one line per crop:
+**Data.** Download the [VarroaDataset](https://zenodo.org/records/4085044) and put it in `data/{train,val,test}/`, each with `gt_one.csv` (one line per crop:
 image path, flag 0/1/3, mite boxes) and the crops under `videos/<video>/`.
 
 ```sh
@@ -95,7 +94,8 @@ make applab-config BOARD=arduino@<board-ip>  # upload demo/ardubeeno.env, check 
 make applab-local                            # or: the same app on this laptop's webcam, http://localhost:7000
 ```
 
-Then start **ArduBeeno Varroa** in App Lab and open `http://<board-ip>:7000`.
+Then start **ArduBeeno Varroa** in App Lab and open `http://<board-ip>:7000`. Our board is reachable by name as
+`ardu-bee-no.local` (`BOARD=arduino@ardu-bee-no.local`).
 
 **Dashboard (optional).** Create the dashboard venv (see [dashboard/README.md](dashboard/README.md)) and two local
 config files, which are .gitignored:
@@ -103,7 +103,7 @@ config files, which are .gitignored:
 - `demo/receiver.env`: `ARDUBEENO_DEVICES_JSON='{"uno-q-01":{"name":"Hive 01","timezone":"Europe/Helsinki","token":"<long random token>"}}'`
   and `ARDUBEENO_DB=dashboard/var/receiver.sqlite3`
 - `demo/ardubeeno.env`: `ARDUBEENO_SERVER_URL=http://<laptop-ip>:8000`, `ARDUBEENO_DEVICE_ID=uno-q-01`,
-  `ARDUBEENO_DEVICE_TOKEN=<the same token>`, optionally `ARDUBEENO_SOURCE=screen_demo` (the demo's dashboard source;
+  `ARDUBEENO_DEVICE_TOKEN=<the same token>`, optionally `ARDUBEENO_SOURCE=screen_demo` (a camera filming a screen;
   other values: `field`, `replay`)
 
 ```sh
@@ -112,19 +112,20 @@ demo/start-receiver.sh         # receiver + dashboard on port 8000, all interfac
 
 ## Documentation
 
-- [docs/TRAINING.md](docs/TRAINING.md): data, models, training, evaluation, export
-- [docs/VERDA.md](docs/VERDA.md): the Verda GPU servers used for training, workflow and costs
-- [applab/ardubeeno/README.md](applab/ardubeeno/README.md): the board app, its settings and speed
-- [dashboard/README.md](dashboard/README.md): receiver and dashboard; [docs/mite-device-outbox.md](docs/mite-device-outbox.md): upload contract
-- [docs/deploy-plan.md](docs/deploy-plan.md), [docs/demo-script.md](docs/demo-script.md),
-  [docs/demo-venue-checklist.md](docs/demo-venue-checklist.md): deployment and demo
-- [RESULTS.md](RESULTS.md): experiments and measurements
+| Topic | Document |
+|---|---|
+| The board app: modes, settings, speed, App Lab | [applab/ardubeeno/README.md](applab/ardubeeno/README.md) |
+| Models: data, training, evaluation, export | [docs/TRAINING.md](docs/TRAINING.md) |
+| Every experiment and measurement | [docs/RESULTS.md](docs/RESULTS.md) |
+| The Verda GPU servers used for training | [docs/VERDA.md](docs/VERDA.md) |
+| Receiver and dashboard | [dashboard/README.md](dashboard/README.md) |
+| Uploads from the board: events, local history, retries | [docs/UPLOADS.md](docs/UPLOADS.md) |
 
 ## Data and models
 
 | Source | Used for | License |
 |---|---|---|
-| Varroa bee-crop dataset: 13,509 crops from 2017 hive-entrance videos, mite boxes in `gt_one.csv` | Mite detector and classifier, all test numbers | **Origin and license not yet documented here (TODO)** |
+| [VarroaDataset](https://zenodo.org/records/4085044), Schurischuster and Kampel (TU Wien), Zenodo v1.2.0, doi:10.5281/zenodo.4085044: 13,509 bee crops (160x280), mite boxes in `gt_one.csv` | Mite detector and classifier, all test numbers | CC BY 4.0 |
 | [BEEHIVE: a public dataset of Apis mellifera images](https://doi.org/10.17632/5yz78xxpmy.1), Micheli, Nuzzi, Papa, Mendeley Data v1 | Bee detector (close-ups) | CC BY 4.0 |
 | [Labeled dataset for bee detection and direction estimation on beehive landing boards](https://doi.org/10.17632/8gb9r2yhfc.6), Sledevic, Mendeley Data v6 | Bee detector (landing boards), screen recordings | CC BY 4.0 |
 | [EV2 dataset](https://zenodo.org/records/13771384), Zenodo 13771384 | Evaluation on foreign footage; one rejected training experiment | CC BY 4.0 |

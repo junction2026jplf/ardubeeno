@@ -1,12 +1,12 @@
 # Training the ArduBeeno Varroa models
 
 This page explains how the models on the Arduino UNO Q were trained, evaluated and exported, and which command
-runs each step. All paths are relative to the repo root. Numbers come from `RESULTS.md`,
+runs each step. All paths are relative to the repo root. Numbers come from [RESULTS.md](RESULTS.md),
 `export/deploy/deploy.json` and `export/fast/board/board_*.txt`.
 
 ## The pipeline on the board
 
-The UNO Q (4x Cortex-A53, onnxruntime on the CPU) films bees through a USB camera. In the demo it films a laptop screen.
+The UNO Q (4x Cortex-A53, onnxruntime on the CPU) films bees through a USB camera. So far it has filmed bee images on a laptop screen.
 
 ```
 camera frame (1280x720)
@@ -38,7 +38,7 @@ LED matrix, web page (port 7000), dashboard API (outbox)
 Deployed thresholds (`export/deploy/deploy.json`, set `camsq288-int8all-sensitive`): `fuse_conf` 0.21, `cls_lo` 0.20,
 `cls_hi` 0.73, with the letterbox-trained 288 px classifier `cls-cam-sq288`. Sections 2-6 below were written for the
 previous set (`cam160-int8all`: 160 px classifier, 0.16 / 0.02 / 0.30); the switch and its numbers are in
-`RESULTS.md`, "Camera fine-tune".
+[RESULTS.md](RESULTS.md), "Camera fine-tune".
 
 ## 1. Data
 
@@ -210,7 +210,7 @@ Key numbers:
 
 | Measure | Value | Source |
 |---|---|---|
-| Original test F1 (3,408 bees), old pair at 0.38 | 0.901 | RESULTS.md |
+| Original test F1 (3,408 bees), old pair at 0.38 | 0.901 | [RESULTS.md](RESULTS.md) |
 | Original test F1, deployed set (int8, fused / cascade) | 0.850 / 0.849 | deploy.json |
 | Camera test F1 (3,600 bees), old pair at 0.38 | 0.725 | deploy.json |
 | Camera test F1, deployed set (int8, fused / cascade) | 0.877 / 0.865 | deploy.json |
@@ -249,17 +249,16 @@ Then start the app in App Lab, or over SSH without App Lab:
 cd ~/ArduinoApps/ardubeeno/python && python3 serve.py      # page on http://<board-ip>:7000
 ```
 
-Details: [applab/ardubeeno/README.md](../applab/ardubeeno/README.md) and the checklist in
-[deploy-plan.md](deploy-plan.md).
+Details: [applab/ardubeeno/README.md](../applab/ardubeeno/README.md).
 
 ## 7. Known limits and next steps
 
 - **Public 2017 data.** All mite labels come from one public dataset of 2017 entrance videos. Mites under a wing
   are the main miss (recall about 0.55-0.65 vs about 0.95 for visible mites).
-- **Bee detector at demo scale.** The bee datasets have very small (landing board) or very large (close-up)
-  bees. The demo shows bees in between, so the bee detector is being retrained with the synthetic data.
+- **Bee detector at camera-on-screen scale.** The bee datasets have very small (landing board) or very large (close-up)
+  bees. The screen recordings show bees in between, so the bee detector is being retrained with the synthetic data.
 - **Rotation.** `crop_bee` only turns bees in 90 degree steps. A bee lying diagonally gives a crop unlike the
   upright training crops.
 - **Real hive footage is needed.** The camera fine-tune covers a camera filming a screen, not a real hive
-  entrance. On foreign footage (EV2) scores shift down; `RESULTS.md` ("On a new camera") describes how to
+  entrance. On foreign footage (EV2) scores shift down; [RESULTS.md](RESULTS.md) ("On a new camera") describes how to
   recalibrate with `device_check.py calibrate` and fine-tune on labelled crops from the target camera.

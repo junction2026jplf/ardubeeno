@@ -2,7 +2,7 @@
 
 This page covers the GPU training on Verda (verda.com, formerly DataCrunch) on 2026-11-13/14: which servers were
 rented, how a run went from the Mac to a GPU and back, and how the setup changed during the night and the next
-day. The models and their scores are in [TRAINING.md](TRAINING.md) and [../RESULTS.md](../RESULTS.md). All times
+day. The models and their scores are in [TRAINING.md](TRAINING.md) and [RESULTS.md](RESULTS.md). All times
 are UTC (the hackathon venue is UTC+2).
 
 ## Why Verda, and why plain VMs

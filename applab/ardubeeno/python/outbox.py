@@ -1,4 +1,4 @@
-"""Local bee-passage history and its upload to the ArduBeeno receiver (docs/mite-device-outbox.md).
+"""Local bee-passage history and its upload to the ArduBeeno receiver (docs/UPLOADS.md).
 
 Every completed bee track becomes one `bee_passage` event, healthy recording time becomes `coverage` events, and
 the app's status is sent as `heartbeat` events. Each event is committed to a local SQLite database together with

@@ -36,7 +36,7 @@ http://<board-ip>:7000 and blinks the LED matrix on a mite (`make applab-push BO
 
 ## Tried and rejected (all within noise or worse on test)
 Longer training (100 epochs), 416 px, YOLO11s, YOLO11s at 416, YOLO26n/s, oversampling under-wing bees ×3,
-a separate under-wing class (detector and classifier), screen augmentation (neutral, kept for the demo),
+a separate under-wing class (detector and classifier), screen augmentation (neutral, kept for the camera-on-screen setup),
 train+val classifier, bigger (s) or larger-input (384) classifier, no RandAugment, weighted/stacked fusion,
 classifier seed ensembles, flip TTA (+0.005, 2× cost), 6-detector ensemble (0.894), a weight-averaged
 "soup" of 4 classifier seeds (collapses; after BatchNorm recalibration 0.895, like an average seed), and
@@ -122,4 +122,4 @@ to camera test (3,600 bees) and the original test (3,408). onnxruntime CPU, boar
 - Benchmark the deployed set (`cam-sq288`, vs `cam-sq160`) on the UNO Q, speed and detector skip rate on camera
   bees: commands in `export/deploy/README.md`.
 - At the hive, aggregate verdicts over several frames of the same bee: under-wing mites show in some frames only.
-- Record and label footage from your own hives (and the camera-on-screen demo setup) and fine-tune on it.
+- Record and label footage from your own hives (and the camera-on-screen setup) and fine-tune on it.

@@ -1,6 +1,6 @@
 # ArduBeeno receiver and dashboard
 
-This is the receiving application: a Python API, persistent server-side SQLite history, and a real API-connected dashboard. The Arduino's local SQLite history and outbox are **specified, not implemented here**. The device agent's handoff is [the outbox contract](../docs/mite-device-outbox.md).
+This is the receiving application: a Python API, persistent server-side SQLite history, and a real API-connected dashboard. The board's side (local SQLite history and upload queue) is `applab/ardubeeno/python/outbox.py`; the protocol between the two is in [docs/UPLOADS.md](../docs/UPLOADS.md).
 
 The dashboard shows all observed bee passages and the subset with detected mites in one stacked chart. The red segment is included in the total, never added on top of the total. Solo controls isolate either metric. Counts, coverage, source, time range, and CSV use the same server data. Uncertain assessments stay in the overall observed count.
 
@@ -45,15 +45,13 @@ Then use `http://<computer-LAN-IP>:8000/api/v1/ingest/batch` on the Arduino. Do 
 
 The receiver persists immutable bee-passage, recording-coverage and heartbeat events. It acknowledges an entire accepted batch only after commit. Replaying identical event identities is safe; changing an already stored event or reusing a session sequence for another event rejects the batch. Out-of-order delivery after an offline period is supported. Event time places observations on the historical chart; receipt time indicates when the receiver last heard from a board.
 
-Healthy coverage intervals are merged before aggregation so overlaps and retries cannot inflate recorded duration. Counts with no coverage are identified as coverage unknown; missing data is not interpreted as a zero-bee observation. All finalized bee tracks must be sent, including tracks with no detected mites and uncertain assessments. The existing detector's positive-transition counter cannot provide the total observed-bee denominator.
+Healthy coverage intervals are merged before aggregation so overlaps and retries cannot inflate recorded duration. Counts with no coverage are identified as coverage unknown; missing data is not interpreted as a zero-bee observation. The board sends every finished bee track, including tracks with no detected mites and uncertain assessments, so the total observed-bee count is a real denominator.
 
 Keep `ARDUBEENO_DB` on durable local storage. Do not delete the database when restarting or redeploying. Back up a running SQLite database with its backup API rather than copying just the main file while WAL writes are active. The server is separate from the detector and does not open a camera, change models, or reset the Arduino matrix.
 
 ## Device integration
 
-See [the device outbox handoff](../docs/mite-device-outbox.md) for exact event JSON, acknowledgements, retry/error handling and on-board transaction design. The onboard event and outbox row must commit together; acknowledgement changes delivery state without deleting local history. No SSH access or device deployment is required to run this receiver.
-
-The earlier [architecture draft](../docs/mite-dashboard-draft/architecture.md) documents design exploration. This README, the outbox handoff and the implemented OpenAPI contract describe the receiving application.
+See [docs/UPLOADS.md](../docs/UPLOADS.md) for the event JSON, acknowledgements, retries and the board's local database. No SSH access or device deployment is required to run this receiver; the OpenAPI page at `/docs` is the executable field reference.
 
 ## Checks
 
