@@ -280,9 +280,20 @@ function syncInputs(s) {
   $('#strong-note').textContent = s.strong != null ? `Or one check scoring ${fmt(s.strong)} or more.` : '';
 }
 
+// A stream that hangs (e.g. the USB network to the board dropped for a moment) fires no error event: reconnect it
+// when /state works again after failing, or when the board counts no viewer although this page shows the stream.
+let offline = false, reconnected = 0;
+function reconnectStream() {
+  if (Date.now() - reconnected < 3000) return;
+  reconnected = Date.now();
+  $('#stream').src = `stream?t=${Date.now()}`;
+}
+
 async function poll() {
   try {
     const s = await (await fetch('state', { cache: 'no-store' })).json();
+    if (offline) { offline = false; reconnectStream(); }
+    if (s.stream && s.stream.viewers === 0 && !document.hidden) reconnectStream();
     $('#conn').textContent = s.frames ? `frame ${s.frames}` : 'waiting for the camera…';
     $('#conn').className = 'on';
     if (!s.frames) return;
@@ -299,6 +310,7 @@ async function poll() {
     if (multi) showMulti(s, view); else showSingle(s, view);
   } catch (e) {
     $('#conn').textContent = 'disconnected'; $('#conn').className = '';
+    offline = true;
   }
 }
 
