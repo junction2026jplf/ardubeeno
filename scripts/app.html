@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArduBeeno Mite Test</title>
+<style>
+:root {
+  --bg: #f6f4ef; --panel: #ffffff; --ink: #1d1b16; --muted: #6b665c; --line: #e3dfd5;
+  --accent: #b7791f; --mite: #c0392b; --mite-bg: #fbe9e7; --clean: #2e7d4f; --clean-bg: #e6f4ec;
+  --bar: #ece8df; --box: #e53935;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15140f; --panel: #1f1d17; --ink: #f1ede4; --muted: #a39d90; --line: #34312a;
+    --accent: #e0a53e; --mite: #ff7b6b; --mite-bg: #3a1f1b; --clean: #6fd39a; --clean-bg: #18301f;
+    --bar: #2c2a23; --box: #ff5246;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, sans-serif; }
+header { padding: 20px 16px 8px; max-width: 1100px; margin: 0 auto; }
+h1 { margin: 0; font-size: 22px; }
+h1 span { color: var(--accent); }
+#info { color: var(--muted); font-size: 13px; margin-top: 4px; }
+main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 40px; }
+nav { display: flex; gap: 6px; margin: 12px 0 16px; flex-wrap: wrap; }
+nav button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 14px;
+  border-radius: 999px; cursor: pointer; font: inherit; }
+nav button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+section { display: none; }
+section.active { display: block; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.btn { border: 0; background: var(--accent); color: #fff; padding: 9px 16px; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 600; }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+.note { color: var(--muted); font-size: 13px; }
+.tally { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.card { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.card canvas { display: block; width: 100%; height: 300px; object-fit: contain; background: #0002; }
+.card figcaption { padding: 10px 12px 12px; }
+.badge { display: inline-block; font-weight: 700; padding: 2px 10px; border-radius: 999px; font-size: 13px; }
+.badge.mite { color: var(--mite); background: var(--mite-bg); }
+.badge.clean { color: var(--clean); background: var(--clean-bg); }
+.meter { position: relative; height: 8px; background: var(--bar); border-radius: 4px; margin: 10px 0 6px; }
+.meter i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--accent); }
+.meter b { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); }
+.small { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.truth { font-size: 13px; margin-top: 6px; }
+.ok { color: var(--clean); } .bad { color: var(--mite); }
+#drop { border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; color: var(--muted);
+  margin-bottom: 14px; cursor: pointer; }
+#drop.over { border-color: var(--accent); color: var(--ink); }
+.cam { display: grid; grid-template-columns: minmax(0, 2fr) minmax(200px, 1fr); gap: 16px; align-items: start; }
+.video { position: relative; background: #000; border-radius: 12px; overflow: hidden; }
+.video video { display: block; width: 100%; }
+.video .roi { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); border: 2px solid #3cf; }
+#live-verdict { font-size: 26px; font-weight: 800; margin: 6px 0; }
+input[type=number] { width: 56px; font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--ink); }
+@media (max-width: 700px) { .cam { grid-template-columns: 1fr; } .card canvas { height: 240px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ArduBeeno <span>mite test</span></h1>
+  <div id="info">loading model…</div>
+</header>
+<main>
+  <nav>
+    <button data-tab="bees" aria-selected="true">Test bees</button>
+    <button data-tab="upload">Your images</button>
+    <button data-tab="cam">Webcam</button>
+  </nav>
+
+  <section id="bees" class="active">
+    <div class="row">
+      <button class="btn" data-kind="any">Random bee</button>
+      <button class="btn ghost" data-kind="mite">Random mite bee</button>
+      <button class="btn ghost" data-kind="clean">Random clean bee</button>
+      <button class="btn ghost" id="ten">10 at once</button>
+      <span class="tally" id="tally"></span>
+    </div>
+    <p class="note">Bees from the two held-out test videos, which the model never saw in training. Red boxes are detected mites; the verdict uses the classifier and the detector together.</p>
+    <div class="grid" id="bee-grid"></div>
+  </section>
+
+  <section id="upload">
+    <div id="drop">Drop bee images here, or click to choose (PNG or JPEG, one bee per image, upright works best)</div>
+    <input type="file" id="files" accept="image/png,image/jpeg" multiple hidden>
+    <div class="grid" id="up-grid"></div>
+  </section>
+
+  <section id="cam">
+    <div class="row">
+      <button class="btn" id="cam-toggle">Start webcam</button>
+      <span class="note">Verdict over the last <input type="number" id="win" value="10" min="1" max="50"> frames: MITE when at least
+        <input type="number" id="hits" value="2" min="1" max="50"> are positive.</span>
+    </div>
+    <div class="cam">
+      <div class="video"><video id="video" playsinline muted></video><div class="roi" id="roi" hidden></div></div>
+      <div>
+        <div id="live-verdict" class="note">Camera off</div>
+        <div class="small" id="live-detail"></div>
+        <figure class="card" style="margin-top:10px"><canvas id="live-canvas"></canvas></figure>
+        <p class="note">Only the cyan centre region (the 4:7 shape of the training crops) goes to the model. Fill it with one bee.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let info = { fuse_conf: 0.38 };
+let tally = { right: 0, total: 0 };
+
+fetch('/info').then(r => r.json()).then(i => {
+  info = i;
+  $('#info').textContent = `${i.model} + ${i.cls_model.join(', ')} · MITE when mean(classifier, top box) ≥ ${i.fuse_conf} · `
+    + `test set ${i.test_bees.mite} mite / ${i.test_bees.clean} clean bees`;
+});
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-selected', x === b));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === b.dataset.tab));
+});
+
+function draw(canvas, img, res) {
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  ctx.lineWidth = Math.max(2, canvas.width / 90);
+  ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--box').trim();
+  for (const [x, y, w, h] of res.boxes) ctx.strokeRect(x, y, w, h);
+}
+
+function caption(res, truth) {
+  const pct = v => `${Math.round(v * 100)}%`;
+  let html = `<span class="badge ${res.verdict ? 'mite' : 'clean'}">${res.verdict ? 'MITE' : 'clean'}</span>
+    <div class="meter"><i style="width:${pct(Math.min(res.fused, 1))}"></i><b style="left:${pct(info.fuse_conf)}"></b></div>
+    <div class="small">score ${res.fused.toFixed(2)} · classifier ${res.prob.toFixed(2)} · top box ${res.top.toFixed(2)}<br>
+    ${res.boxes.length} box${res.boxes.length === 1 ? '' : 'es'} · ${(res.ms[0] + res.ms[1]).toFixed(0)} ms</div>`;
+  if (truth) {
+    const right = truth.actual === res.verdict;
+    const what = truth.actual ? (truth.underwing ? 'mite under a wing' : 'mite') : 'clean';
+    html += `<div class="truth ${right ? 'ok' : 'bad'}">${right ? '✓' : '✗'} labelled ${what}</div>`;
+  }
+  return html;
+}
+
+function card(grid, src, res, truth) {
+  const fig = document.createElement('figure');
+  fig.className = 'card';
+  const canvas = document.createElement('canvas');
+  const cap = document.createElement('figcaption');
+  fig.append(canvas, cap);
+  grid.prepend(fig);
+  if (res.error) { cap.innerHTML = `<span class="bad">${res.error}</span>`; return; }
+  const img = new Image();
+  img.onload = () => draw(canvas, img, res);
+  img.src = src;
+  cap.innerHTML = caption(res, truth);
+}
+
+async function randomBee(kind) {
+  const res = await (await fetch(`/random?kind=${kind}`)).json();
+  card($('#bee-grid'), res.image, res, res);
+  tally.total++; tally.right += res.actual === res.verdict;
+  $('#tally').textContent = `${tally.right} of ${tally.total} correct`;
+}
+document.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => randomBee(b.dataset.kind));
+$('#ten').onclick = async () => { for (let i = 0; i < 10; i++) await randomBee('any'); };
+
+async function predict(blob) {
+  const r = await fetch('/predict', { method: 'POST', body: blob });
+  return r.json();
+}
+async function handleFiles(files) {
+  for (const f of files) card($('#up-grid'), URL.createObjectURL(f), await predict(f));
+}
+const drop = $('#drop');
+drop.onclick = () => $('#files').click();
+$('#files').onchange = e => handleFiles(e.target.files);
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); handleFiles(e.dataTransfer.files); };
+
+// Webcam: crop the centre 4:7 region like live.py, send one frame at a time, aggregate verdicts.
+const video = $('#video'), crop = document.createElement('canvas');
+let stream = null, recent = [];
+$('#cam-toggle').onclick = async () => {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop()); stream = null;
+    $('#cam-toggle').textContent = 'Start webcam'; $('#roi').hidden = true;
+    $('#live-verdict').textContent = 'Camera off'; $('#live-verdict').className = 'note';
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+  } catch (e) {
+    $('#live-verdict').textContent = `No camera: ${e.message}`; return;
+  }
+  video.srcObject = stream; await video.play();
+  $('#cam-toggle').textContent = 'Stop webcam'; recent = [];
+  loop();
+};
+async function loop() {
+  const live = $('#live-canvas');
+  while (stream) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) { await new Promise(r => setTimeout(r, 100)); continue; }
+    const rw = Math.min(vw, Math.round(vh * 160 / 280)), x0 = (vw - rw) >> 1;
+    const roi = $('#roi'); roi.hidden = false; roi.style.width = `${100 * rw / vw}%`;
+    crop.width = rw; crop.height = vh;
+    crop.getContext('2d').drawImage(video, x0, 0, rw, vh, 0, 0, rw, vh);
+    const blob = await new Promise(r => crop.toBlob(r, 'image/jpeg', 0.92));
+    const t = performance.now();
+    const res = await predict(blob);
+    if (!stream) break;
+    draw(live, crop, res);
+    const win = Math.max(1, +$('#win').value || 1), need = Math.max(1, +$('#hits').value || 1);
+    recent.push(res.verdict); while (recent.length > win) recent.shift();
+    const hits = recent.filter(Boolean).length, mite = hits >= need;
+    const v = $('#live-verdict');
+    v.textContent = mite ? 'MITE' : 'clean'; v.className = mite ? 'bad' : 'ok';
+    $('#live-detail').textContent = `${hits}/${recent.length} frames positive · this frame ${res.fused.toFixed(2)} `
+      + `(threshold ${info.fuse_conf}) · ${res.boxes.length} boxes · ${(1000 / (performance.now() - t)).toFixed(1)} FPS`;
+  }
+}
+</script>
+</body>
+</html>

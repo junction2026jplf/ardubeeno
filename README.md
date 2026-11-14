@@ -36,3 +36,37 @@ By leveraging the Arduino Uno Q's hybrid architecture (a high-performance AI pro
 ## Real-World Pilot at 42 Heilbronn
 
 We are a team of alumni and staff from **42 Heilbronn**, a peer-to-peer coding school in Germany. Our campus is home to **active beehives right outside our building**, giving us a living, real-world testbed to deploy, validate, and protect local bee colonies with self-built Edge AI.
+
+## Screen-to-camera training data (`make record`)
+
+`scripts/record.py` shows dataset images full-screen (black background), films the screen with a USB camera,
+and saves the video plus settled still frames with YOLO labels (0 bee, 1 varroa) mapped into camera
+coordinates, so a model can be fine-tuned on what a real camera sees of the screen.
+
+```sh
+make record-cameras                       # list screens and cameras (+ snapshots in captures/cameras/)
+make record SRC=data/test CAMERA=1 REC_ARGS="--limit 300 --shuffle --duration 1.5"
+make record SRC=data/test CAMERA=1 REC_ARGS="--tile 3x2 --only mite"     # 6 crops per screen = multi-bee scene
+make record SRC=datasets/<name> CAMERA=1 REC_ARGS="--split val --screen 1"  # YOLO folder or its yaml
+make record-mendeley CAMERA=1 REC_ARGS="--duration 1.5"   # Mendeley landing-board val split, 1,410 frames, shuffled
+make record CAMERA=sim REC_ARGS="--headless --limit 10"                  # dry run with a simulated camera
+```
+
+- **macOS camera permission:** run it from your own Terminal/iTerm; the first run asks for Camera access
+  (System Settings > Privacy & Security > Camera, enable the terminal app, then restart it). Without it
+  the camera delivers no frames.
+- **Setup:** point the camera at the screen so it sees all of it, focus, and lock exposure if the camera allows.
+  The run starts with an ArUco marker screen; it fits the screen -> camera homography from it
+  (`calib_start.jpg` shows what was detected). It recalibrates every `--recalib-every` slides, when the
+  camera view stops matching the slides, on key `c`, and at the end, and warns if the camera moved.
+  Keys: `Esc`/`q` quit.
+- **Small bees:** images keep their aspect ratio (letterboxed on black). The run prints the median bee size in
+  camera pixels (and warns below `--min-bee-px`, default 40). Mendeley bees are ~50–100 px at 1080p, so the screen
+  should fill most of a 1080p+ camera frame. Missing YOLO label files count as frames without bees.
+- **Frames:** per slide, `--stills` frames after `--settle` seconds, only once the rectified camera view matches
+  the new slide and is steady (no transition blends).
+- **Output** in `captures/screen-<time>/`: `video.mp4`, `images/`, `labels/` (YOLO), `data.yaml`, `manifest.csv`
+  (source image(s), their gt_one.csv flag or label file, camera frame, time, calibration, match score, box counts),
+  `calibration.json`. Single-bee crops get a bee box covering the whole crop.
+- Sources: a data split with `gt_one.csv`, a YOLO dataset (class names bee/varroa/mite are recognised, others kept,
+  `--class-map` to rename), or a folder of plain images. `--camera` also takes a video file or `none` (slideshow only).

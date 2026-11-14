@@ -1,0 +1,37 @@
+.DS_Store
+.venv/
+yolo/
+runs/
+export/
+captures/
+varroa.yaml
+*.pt
+*.onnx
+yolo_cls/
+varroa_trainval.yaml
+varroa_*.yaml
+yolo2/
+yolo_cls3/
+applab/ardubeeno/python/device_check.py
+data/
+datasets/
+demo/*.env
+# generated training data (scripts/camera_crops.py and one-off conversions), several GB
+yolo_cam/
+yolo_cam_cls/
+yolo_cam_cls_sq/
+yolo_cam_mix/
+yolo_cam_mix_sq/
+# onnxruntime quantization leftovers
+*.data
+sym_shape_infer_temp.onnx
+# build outputs of make applab (copied from export/)
+applab/ardubeeno/python/deploy.json
+applab/ardubeeno/python/bees.json
+# caches and local state
+__pycache__/
+.ruff_cache/
+dashboard/.venv/
+dashboard/var/
+# demo images come from data/ (same license as the dataset), kept out like data/
+demo/*.png

@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArduBeeno Live</title>
+<style>
+:root {
+  --bg: #f6f4ef; --panel: #ffffff; --ink: #1d1b16; --muted: #6b665c; --line: #e3dfd5;
+  --accent: #b7791f; --mite: #c0392b; --mite-bg: #fbe9e7; --clean: #2e7d4f; --clean-bg: #e6f4ec; --bar: #ece8df;
+  --shadow: 0 12px 40px rgba(0, 0, 0, .18);
+  --gap: 14px; --head: 52px;
+  /* Right-hand column: whatever the 16:9 video leaves over when it fills the height, at least 280 px / 19vw. */
+  --side: clamp(280px, max(19vw, calc(100vw - (100dvh - var(--head) - 150px - 3 * var(--gap)) * 16 / 9 - 3 * var(--gap))), 34vw);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15140f; --panel: #1f1d17; --ink: #f1ede4; --muted: #a39d90; --line: #34312a;
+    --accent: #e0a53e; --mite: #ff7b6b; --mite-bg: #3a1f1b; --clean: #6fd39a; --clean-bg: #18301f; --bar: #2c2a23;
+    --shadow: 0 12px 40px rgba(0, 0, 0, .6);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.4 system-ui, -apple-system, sans-serif;
+  display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+.hidden { display: none !important; }
+.small { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+button { border: 0; background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  font: inherit; font-weight: 600; }
+button.ghost { background: var(--bar); color: var(--ink); }
+button:disabled { opacity: .5; cursor: default; }
+
+/* Header: title, connection, the live threshold, and the (secondary) controls. */
+header { flex: 0 0 var(--head); display: flex; align-items: center; gap: 14px; padding: 0 var(--gap); min-width: 0; }
+h1 { margin: 0; font-size: 24px; white-space: nowrap; }
+h1 span { color: var(--accent); }
+#conn { font-size: 14px; color: var(--muted); white-space: nowrap; }
+#conn::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+#conn.on::before { background: var(--clean); }
+.chip { font-size: 14px; padding: 4px 10px; border-radius: 999px; background: var(--bar); color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chip b { color: var(--accent); }
+.tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.tools button { padding: 6px 12px; font-size: 14px; }
+kbd { font: 12px ui-monospace, monospace; padding: 0 4px; border: 1px solid currentColor; border-radius: 4px; opacity: .7; margin-left: 4px; }
+
+/* Stage: video + counters on the left, the newest checked bees on the right. Fits the window, no page scroll. */
+.stage { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) var(--side); gap: var(--gap);
+  padding: 0 var(--gap) var(--gap); }
+.left { display: flex; flex-direction: column; gap: var(--gap); min-height: 0; min-width: 0; }
+.video { flex: 0 1 auto; aspect-ratio: 16 / 9; min-height: 0; background: #000; border-radius: 12px; overflow: hidden; position: relative; }
+.video img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.counters { flex: 1 0 140px; display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--gap); min-height: 140px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; min-width: 0; }
+.counters .card { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+.num { font-size: clamp(44px, 7.5vh, 96px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.lbl { font-size: clamp(15px, 2.1vh, 22px); color: var(--muted); margin-top: 6px; font-weight: 600; }
+.mitecard .num { color: var(--mite); }
+.mitecard.live { background: var(--mite-bg); border-color: var(--mite); }
+h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 700; }
+
+/* Single mode counters */
+#verdict { font-size: clamp(44px, 7.5vh, 96px); font-weight: 800; line-height: 1; color: var(--muted); }
+.vcard.mite { background: var(--mite-bg); border-color: var(--mite); }
+.vcard.mite #verdict { color: var(--mite); }
+.vcard.clean #verdict { color: var(--clean); }
+.meter { position: relative; width: 100%; height: 14px; background: var(--bar); border-radius: 7px; margin: 10px 0 6px; }
+.meter i { position: absolute; inset: 0 auto 0 0; border-radius: 7px; background: var(--accent); transition: width .15s; }
+.meter b { position: absolute; top: -6px; bottom: -6px; width: 3px; background: var(--ink); }
+.dots { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; margin: 8px 0 4px; }
+.dots span { width: 18px; height: 18px; border-radius: 4px; background: var(--bar); }
+.dots span.hit { background: var(--mite); }
+
+/* Right column */
+.side { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.side h2 { flex: 0 0 auto; }
+#gallery { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 10px; }
+#gallery figure { flex: 0 0 calc((100% - (var(--gcols, 2) - 1) * 10px) / var(--gcols, 2)); margin: 0; border-radius: 10px; overflow: hidden; border: 4px solid var(--line); background: #000; }
+#gallery figure.mite { border-color: var(--mite); }
+#gallery figure.clean { border-color: var(--clean); }
+#gallery img { display: block; width: 100%; aspect-ratio: 4 / 7; object-fit: cover; }
+#gallery figcaption { font-size: 15px; padding: 3px 8px; background: var(--panel); display: flex; justify-content: space-between;
+  align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#gallery figcaption b { font-size: 17px; }
+#gallery figure.mite figcaption b { color: var(--mite); }
+#gallery figure.clean figcaption b { color: var(--clean); }
+.legend { flex: 0 0 auto; margin-top: 8px; }
+#boxes { list-style: none; margin: 0; padding: 0; font-size: 16px; font-variant-numeric: tabular-nums; overflow: auto; }
+#boxes li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+#boxes li:last-child { border: 0; }
+#boxes b { color: var(--mite); }
+
+/* Drawer: details + settings, collapsed by default, over the right column. */
+#drawer { position: fixed; top: var(--head); right: var(--gap); width: min(400px, calc(100vw - 2 * var(--gap)));
+  max-height: calc(100dvh - var(--head) - var(--gap)); overflow: auto; z-index: 10; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 16px; }
+#drawer section + section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 14px; font-variant-numeric: tabular-nums; }
+dt { color: var(--muted); }
+dd { margin: 0; text-align: right; white-space: nowrap; }
+dt.sub { padding-left: 14px; }
+label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 10px 0; font-size: 14px; }
+input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
+input[type=number] { width: 70px; font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.thr { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px; margin: 10px 0; }
+.thr label { margin: 4px 0; }
+#fuse-v { font-size: 20px; font-weight: 800; color: var(--accent); min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.seg { display: flex; gap: 6px; }
+.seg button { flex: 1; background: var(--bar); color: var(--ink); }
+.seg button.on { background: var(--accent); color: #fff; }
+.row { display: flex; gap: 8px; margin-top: 12px; }
+.row button { flex: 1; }
+
+/* Camera focus / exposure: Auto|Manual, a slider over the camera's range, -/+ by one step. */
+.camctl + .camctl { margin-top: 14px; }
+.camctl .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; }
+.camctl .seg button { padding: 4px 12px; font-size: 14px; }
+.camctl .slide { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.camctl .slide button { padding: 2px 0; width: 32px; font-size: 18px; line-height: 1.2; }
+.camctl .val { font-size: 20px; font-weight: 800; color: var(--accent); min-width: 2.6em; text-align: right; font-variant-numeric: tabular-nums; }
+.camctl.auto .val { color: var(--muted); }
+.cam-err { color: var(--mite); }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; padding: 8px 16px;
+  border-radius: 999px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); box-shadow: var(--shadow);
+  font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity .2s; }
+#toast.show { opacity: 1; }
+
+/* Presentation mode: only the stage; a faint button in the corner leads back. */
+body.present header .chip, body.present .tools > :not(#present), body.present #drawer, body.present .legend { display: none !important; }
+body.present #present { opacity: .35; }
+body.present #present:hover { opacity: 1; }
+
+/* Small screens: stack and scroll. */
+@media (max-width: 900px), (max-height: 560px) {
+  body { height: auto; overflow: auto; }
+  header { flex-wrap: wrap; padding: 10px 16px; gap: 8px 12px; }
+  .tools { margin-left: 0; width: 100%; }
+  .stage { display: flex; flex-direction: column; padding: 0 16px 16px; }
+  .video { flex: none; width: 100%; }
+  .counters { flex: none; grid-template-columns: repeat(2, 1fr); min-height: 0; }
+  .counters .card { padding: 14px 8px; }
+  .num, #verdict { font-size: 44px; }
+  .lbl { font-size: 15px; }
+  #gallery { overflow: visible; }
+  #gallery figure { flex-basis: calc((100% - (var(--gcols, 2) - 1) * 10px) / var(--gcols, 2)); }
+  #drawer { position: absolute; top: auto; margin-top: 4px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>ArduBeeno <span>live</span></h1>
+  <span id="conn">connecting…</span>
+  <span class="chip" id="mode-chip">–</span>
+  <span class="chip" title="The board's current mite threshold (fuse_conf)">threshold <b id="thr-chip">–</b></span>
+  <div class="tools">
+    <button class="ghost" id="settings-btn" aria-expanded="false">Settings &amp; details<kbd>s</kbd></button>
+    <button class="ghost" id="present" title="Presentation mode: video, counters and gallery only">Presentation<kbd>p</kbd></button>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="left">
+    <div class="video"><img id="stream" src="stream" alt="Camera with detected bees and mites"></div>
+    <div class="counters multi">
+      <div class="card"><div class="num" id="bees-now">–</div><div class="lbl">bees in view</div></div>
+      <div class="card"><div class="num" id="bees-seen">–</div><div class="lbl">observed</div></div>
+      <div class="card"><div class="num" id="bees-checked">–</div><div class="lbl">checked for mites</div></div>
+      <div class="card mitecard" id="mite-card"><div class="num" id="bees-mite">–</div><div class="lbl">with mites</div></div>
+    </div>
+    <div class="counters single hidden">
+      <div class="card vcard" id="vcard"><div id="verdict">…</div><div class="lbl">centre bee</div></div>
+      <div class="card"><div class="num" id="fused">–</div>
+        <div class="meter"><i id="bar"></i><b id="thr"></b></div><div class="lbl">mite score</div></div>
+      <div class="card"><div class="dots" id="dots"></div><div class="lbl" id="hits">positive frames</div></div>
+      <div class="card mitecard"><div class="num" id="count">–</div><div class="lbl">mites counted</div></div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <div class="card side multi" style="flex: 1">
+      <h2>Newest checked bees</h2>
+      <div id="gallery"><span class="small">No bee checked yet</span></div>
+      <div class="small legend">Green clean · red mite (boxes show where) · number: highest mite score</div>
+    </div>
+    <div class="card side single hidden" style="flex: 1">
+      <h2>Mites in this frame</h2>
+      <ul id="boxes"></ul>
+      <div class="small legend">Only the cyan centre region is checked. The verdict turns MITE after enough positive frames.</div>
+    </div>
+  </aside>
+</main>
+
+<div id="drawer" class="hidden" role="dialog" aria-label="Settings and details">
+  <section>
+    <h2>Details</h2>
+    <dl class="multi">
+      <dt>Model rate</dt><dd id="d-fps">–</dd>
+      <dt>Stream (view)</dt><dd id="d-view">–</dd>
+      <dt>Bee detector</dt><dd id="d-bees">–</dd>
+      <dt>Mite check per bee</dt><dd id="d-check">–</dd>
+      <dt class="sub">classifier</dt><dd id="d-cls">–</dd>
+      <dt class="sub">mite detector</dt><dd id="d-det">–</dd>
+      <dt>Checks run</dt><dd id="d-checks">–</dd>
+    </dl>
+    <dl class="single hidden">
+      <dt>Classifier probability</dt><dd id="s-prob">–</dd>
+      <dt>Top box</dt><dd id="s-top">–</dd>
+      <dt>Fused score / threshold</dt><dd id="s-fused">–</dd>
+      <dt>This frame</dt><dd id="s-frame">–</dd>
+      <dt>Positive frames (total)</dt><dd id="s-pos">–</dd>
+      <dt>Model rate</dt><dd id="s-fps">–</dd>
+      <dt>Stream (view)</dt><dd id="s-view">–</dd>
+      <dt>Classifier time</dt><dd id="s-cls">–</dd>
+      <dt>Mite detector time</dt><dd id="s-det">–</dd>
+    </dl>
+    <div class="small multi" style="margin-top: 6px">Times are medians over the recent runs.</div>
+  </section>
+  <section>
+    <h2>Settings</h2>
+    <div class="seg" id="modes"><button data-mode="multi">All bees</button><button data-mode="single">Centre bee</button></div>
+    <div class="thr">
+      <label>Mite threshold <input type="range" id="fuse" min="0.05" max="0.95" step="0.01" disabled> <span id="fuse-v">–</span></label>
+      <div class="small" id="fuse-note">Live on the board: changes the verdict for everyone watching.</div>
+    </div>
+    <label class="multi">Min. bee size to check (px) <input type="number" id="minbee" min="0" max="1000" step="10" disabled></label>
+    <label class="multi">Positive checks for MITE <input type="number" id="minhits-m" min="1" max="100" disabled></label>
+    <div class="small multi" id="strong-note"></div>
+    <label class="single hidden">Frames to look at <input type="number" id="window" min="1" max="100" disabled></label>
+    <label class="single hidden">Positive frames for MITE <input type="number" id="minhits-s" min="1" max="100" disabled></label>
+    <div class="row"><button class="ghost" id="reset">Reset counts</button><button id="snap">Save this frame</button></div>
+    <div class="small" id="snap-msg" style="margin-top: 8px">Saves the frame (centre bee: the cyan region) unannotated to captures/, for labelling your own footage.</div>
+  </section>
+  <section id="camera">
+    <h2>Camera focus</h2>
+    <div class="small" id="cam-na">Checking the camera…</div>
+    <div class="camctl hidden" id="focus-ctl">
+      <div class="head"><span>Focus <kbd>f</kbd><kbd>[</kbd><kbd>]</kbd></span>
+        <div class="seg"><button data-auto="1">Auto</button><button data-auto="0">Manual</button></div></div>
+      <div class="slide"><button class="ghost" data-step="-1" aria-label="Focus one step nearer">−</button>
+        <input type="range" aria-label="Focus"><button class="ghost" data-step="1" aria-label="Focus one step further">+</button>
+        <span class="val">–</span></div>
+    </div>
+    <div class="camctl hidden" id="exposure-ctl">
+      <div class="head"><span>Exposure</span>
+        <div class="seg"><button data-auto="1">Auto</button><button data-auto="0">Manual</button></div></div>
+      <div class="slide"><button class="ghost" data-step="-1" aria-label="Shorter exposure">−</button>
+        <input type="range" aria-label="Exposure"><button class="ghost" data-step="1" aria-label="Longer exposure">+</button>
+        <span class="val">–</span></div>
+    </div>
+    <div class="small" id="cam-note" style="margin-top: 8px"></div>
+  </section>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const fmt = (v, d = 2) => v == null ? '–' : (+v).toFixed(d);
+const ms = v => v == null ? '–' : `${Math.round(v)} ms`;
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+let last = null, firstFuse = null;
+
+// Settings inputs always show the server's value, except while someone is editing one of them.
+const inputs = { fuse: 'fuse_conf', minbee: 'min_bee_px', 'minhits-m': 'min_hits', 'minhits-s': 'min_hits', window: 'window' };
+function syncInputs(s) {
+  for (const [id, key] of Object.entries(inputs)) {
+    const el = document.getElementById(id);
+    if (s[key] == null) continue;
+    el.disabled = false;
+    if (document.activeElement !== el && !el.dataset.dragging) el.value = s[key];
+  }
+  if (!$('#fuse').dataset.dragging) $('#fuse-v').textContent = fmt(s.fuse_conf);
+  if (firstFuse == null) firstFuse = s.fuse_conf;
+  $('#fuse-note').textContent = `Live on the board: changes the verdict for everyone watching.` +
+    (Math.abs(s.fuse_conf - firstFuse) > 1e-6 ? ` It was ${fmt(firstFuse)} when this page opened.` : '');
+  $('#strong-note').textContent = s.strong != null ? `Or one check scoring ${fmt(s.strong)} or more.` : '';
+}
+
+async function poll() {
+  try {
+    const s = await (await fetch('state', { cache: 'no-store' })).json();
+    $('#conn').textContent = s.frames ? `frame ${s.frames}` : 'waiting for the camera…';
+    $('#conn').className = 'on';
+    if (!s.frames) return;
+    last = s;
+    const multi = s.mode === 'multi';
+    $$('.multi').forEach(e => e.classList.toggle('hidden', !multi));
+    $$('.single').forEach(e => e.classList.toggle('hidden', multi));
+    $('#modes').classList.toggle('hidden', !s.multi_available);
+    $$('#modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === s.mode));
+    $('#mode-chip').textContent = multi ? 'all bees' : 'centre bee';
+    $('#thr-chip').textContent = fmt(s.fuse_conf);
+    syncInputs(s);
+    const view = s.stream ? `${s.stream.fps} FPS · ${s.stream.viewers} viewer${s.stream.viewers === 1 ? '' : 's'}` : '–';
+    if (multi) showMulti(s, view); else showSingle(s, view);
+  } catch (e) {
+    $('#conn').textContent = 'disconnected'; $('#conn').className = '';
+  }
+}
+
+function showMulti(s, view) {
+  $('#bees-now').textContent = s.bees_now;
+  $('#bees-seen').textContent = s.bees_seen;
+  $('#bees-checked').textContent = s.bees_checked;
+  $('#bees-mite').textContent = s.count;
+  $('#mite-card').classList.toggle('live', !!s.mite);
+  const t = s.timing || {};
+  $('#d-fps').textContent = `${s.fps} FPS`;
+  $('#d-view').textContent = view;
+  $('#d-bees').textContent = `${ms(t.bees_ms)}${s.det_every > 1 ? ` · every ${s.det_every} frames` : ''}`;
+  $('#d-check').textContent = ms(t.check_ms);
+  $('#d-cls').textContent = ms(t.cls_ms);
+  $('#d-det').textContent = `${t.det_ms == null ? 'not run yet' : ms(t.det_ms)}` +
+    (t.det_skipped == null ? '' : ` · on ${Math.round((1 - t.det_skipped) * 100)} % of checks`);
+  $('#d-checks').textContent = t.checks ?? '–';
+  // Only touch images whose crop changed, so the gallery doesn't flicker.
+  const g = $('#gallery');
+  const keys = s.gallery.map(b => `${b.id}-${b.v}-${b.status}`).join(',');
+  if (g.dataset.keys !== keys) {
+    g.innerHTML = s.gallery.map(b => `<figure class="${b.status}" title="Bee ${b.id}: ${b.positives} of ${b.checks} checks positive, best score ${fmt(b.score)}">
+        <img src="crop?id=${b.id}&v=${b.v}" alt="Bee ${b.id}">
+        <figcaption><span class="small">#${b.id}</span><b>${fmt(b.score)}</b></figcaption></figure>`).join('')
+      || '<span class="small">No bee checked yet</span>';
+    g.dataset.keys = keys;
+    fitGallery();
+  }
+}
+
+function showSingle(s, view) {
+  const v = $('#vcard');
+  $('#verdict').textContent = s.mite ? 'MITE' : 'clean';
+  v.classList.toggle('mite', !!s.mite); v.classList.toggle('clean', !s.mite);
+  $('#fused').textContent = fmt(s.fused);
+  $('#bar').style.width = `${Math.min(100, (s.fused || 0) * 100)}%`;
+  $('#thr').style.left = `${s.fuse_conf * 100}%`;
+  $('#dots').innerHTML = (s.recent || []).map(h => `<span class="${h ? 'hit' : ''}"></span>`).join('');
+  $('#hits').textContent = `${s.hits} of ${s.recent.length} frames positive (MITE from ${s.min_hits})`;
+  $('#count').textContent = s.count;
+  $('#boxes').innerHTML = s.boxes.length
+    ? s.boxes.map(([x, y, w, h, c], i) => `<li><span>Mite ${i + 1} at (${x}, ${y}), ${w}×${h} px</span><b>${fmt(c)}</b></li>`).join('')
+    : '<li class="small">No mite boxes above the box threshold</li>';
+  $('#s-prob').textContent = s.classifier ? fmt(s.prob) : 'not loaded';
+  $('#s-top').textContent = fmt(s.top);
+  $('#s-fused').textContent = `${fmt(s.fused)} / ${fmt(s.fuse_conf)}`;
+  $('#s-frame').textContent = s.frame_mite ? 'positive' : 'negative';
+  $('#s-pos').textContent = s.positive_frames;
+  $('#s-fps').textContent = `${s.fps} FPS`;
+  $('#s-view').textContent = view;
+  const [det, cls] = s.ms || [];  // last frame; the detector is skipped when the classifier is sure (cascade)
+  $('#s-cls').textContent = s.classifier ? ms(cls) : '–';
+  $('#s-det').textContent = det ? ms(det) : 'skipped (classifier sure)';
+}
+
+// Pick the number of columns: the biggest crops that still show at least 8 bees (else as many as fit),
+// and hide any crop the column would cut off.
+function fitGallery() {
+  const g = $('#gallery');
+  const figs = g.querySelectorAll('figure');
+  figs.forEach(f => { f.style.visibility = ''; });
+  const W = g.clientWidth, gap = 10;
+  if (getComputedStyle(g).overflow === 'visible') {  // stacked: the page scrolls, show them all
+    g.style.setProperty('--gcols', Math.max(2, Math.floor((W + gap) / 130)));
+    return;
+  }
+  const H = g.clientHeight, cap = figs[0] ? figs[0].querySelector('figcaption').offsetHeight + 8 : 34;
+  let best = { cols: 2, n: -1 };
+  for (let cols = 2; cols <= 4; cols++) {
+    const w = (W - (cols - 1) * gap) / cols;
+    if (w < 90 && cols > 2) break;
+    const n = cols * Math.floor((H + gap) / (w * 7 / 4 + cap + gap));
+    if (best.n < 8 && n > best.n) best = { cols, n };
+  }
+  g.style.setProperty('--gcols', best.cols);
+  const bottom = g.getBoundingClientRect().bottom;
+  figs.forEach(f => { f.style.visibility = f.getBoundingClientRect().bottom > bottom + 1 ? 'hidden' : ''; });
+}
+addEventListener('resize', fitGallery);
+
+setInterval(poll, 300);
+poll();
+
+// Send only the setting that changed, never a default the page made up.
+async function configure(params) {
+  try {
+    const s = await (await fetch(`config?${new URLSearchParams(params)}`)).json();
+    if (s && typeof s === 'object') { last = { ...(last || {}), ...s }; $('#thr-chip').textContent = fmt(s.fuse_conf); }
+  } catch (e) {}
+  poll();
+}
+const fuse = $('#fuse');
+fuse.oninput = () => { fuse.dataset.dragging = 1; $('#fuse-v').textContent = fmt(fuse.value); };
+fuse.onchange = async () => { await configure({ fuse_conf: fuse.value }); delete fuse.dataset.dragging; };
+$('#minbee').onchange = e => configure({ min_bee_px: e.target.value });
+$('#minhits-m').onchange = e => configure({ min_hits: e.target.value });
+$('#minhits-s').onchange = e => configure({ min_hits: e.target.value });
+$('#window').onchange = e => configure({ window: e.target.value });
+$$('#modes button').forEach(b => b.onclick = () => configure({ mode: b.dataset.mode }));
+$('#reset').onclick = async () => {
+  if (!confirm('Reset the bee and mite counts on the board?')) return;
+  await fetch('reset'); poll();
+};
+$('#snap').onclick = async () => {
+  const r = await (await fetch('snapshot')).json();
+  $('#snap-msg').textContent = r.saved ? `Saved ${r.saved}` : r.error;
+};
+
+// Drawer and presentation mode
+function setDrawer(open) {
+  if (open && $('#drawer').classList.contains('hidden')) camRequest();  // the camera may have changed meanwhile
+  $('#drawer').classList.toggle('hidden', !open);
+  $('#settings-btn').setAttribute('aria-expanded', open);
+}
+function setPresent(on) {
+  document.body.classList.toggle('present', on);
+  $('#present').textContent = on ? 'Exit presentation' : 'Presentation';
+  $('#present').insertAdjacentHTML('beforeend', '<kbd>p</kbd>');
+  if (on) setDrawer(false);
+  store.set('ardubeeno.present', on ? '1' : '0');
+  requestAnimationFrame(fitGallery);
+}
+$('#settings-btn').onclick = () => setDrawer($('#drawer').classList.contains('hidden'));
+
+// Camera focus (and exposure, when the board can set it): GET camera reads, camera?autofocus=0|1&focus=N sets.
+// The reply is always the camera's state; "error" says why a change didn't take, "reason" why there is no control.
+let cam = null, camSeq = 0, toastTimer = null;
+const camKinds = {
+  focus: { el: '#focus-ctl', auto: 'autofocus', value: 'focus', name: 'Focus' },
+  exposure: { el: '#exposure-ctl', auto: 'auto_exposure', value: 'exposure', name: 'Exposure' },
+};
+function camGroup(kind, s = cam) {  // focus is at the top level of the reply, exposure nested with auto/value
+  if (!s) return null;
+  if (kind === 'focus') return { ...s, auto: s.autofocus, value: s.focus };
+  return s.exposure || null;
+}
+function toast(text) {
+  const t = $('#toast');
+  t.textContent = text; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1400);
+}
+function showCamera(s) {
+  cam = s;
+  const f = camGroup('focus');
+  $('#cam-na').classList.toggle('hidden', !!f.available);
+  $('#cam-na').textContent = f.available ? '' : `Focus control not available on this camera${f.reason ? `: ${f.reason}` : '.'}`;
+  for (const kind of Object.keys(camKinds)) {
+    const g = camGroup(kind), box = $(camKinds[kind].el), r = box.querySelector('input');
+    box.classList.toggle('hidden', !g || !g.available);
+    if (!g || !g.available) continue;
+    box.classList.toggle('auto', !!g.auto);
+    box.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', (b.dataset.auto === '1') === !!g.auto));
+    r.min = g.min; r.max = g.max; r.step = g.step || 1;
+    if (!r.dataset.dragging && g.value != null) { r.value = g.value; box.querySelector('.val').textContent = g.value; }
+  }
+  const e = camGroup('exposure');
+  const notes = [];
+  if (f.available) notes.push(`via ${f.method}${f.device ? ` on ${f.device}` : ''} · range ${f.min}–${f.max}` +
+    (f.range_known ? `, step ${f.step}${f.default != null ? `, default ${f.default}` : ''}` : ' (a guess: the camera doesn\'t report it)'));
+  if (f.available && (!e || !e.available)) notes.push(`Exposure: not settable${e && e.reason ? ` (${e.reason})` : ''}`);
+  if (s.error) notes.push(`<span class="cam-err">${s.error.replace(/</g, '&lt;')}</span>`);
+  $('#cam-note').innerHTML = notes.join('<br>');
+}
+async function camRequest(params) {
+  const seq = ++camSeq;
+  try {
+    const s = await (await fetch(params ? `camera?${new URLSearchParams(params)}` : 'camera', { cache: 'no-store' })).json();
+    if (seq === camSeq) showCamera(s);  // an older reply mustn't undo a newer change
+    return s;
+  } catch (e) {
+    if (seq === camSeq) $('#cam-note').innerHTML = '<span class="cam-err">The board did not answer.</span>';
+    return null;
+  }
+}
+// At most one request per 200 ms while a value changes (slider drag, held key), then the last value.
+function throttle(fn, ms = 200) {
+  let lastT = 0, timer = null, pending = null;
+  const flush = () => { timer = null; lastT = Date.now(); fn(pending); };
+  const call = v => {
+    pending = v;
+    const wait = lastT + ms - Date.now();
+    if (wait <= 0 && !timer) flush(); else if (!timer) timer = setTimeout(flush, wait);
+  };
+  call.now = v => { clearTimeout(timer); timer = null; pending = v; flush(); };
+  return call;
+}
+const camSend = {};
+for (const [kind, k] of Object.entries(camKinds)) {
+  const box = $(k.el), r = box.querySelector('input'), val = box.querySelector('.val');
+  camSend[kind] = throttle(v => camRequest({ [k.value]: v }));  // a value implies manual on the board
+  const manualLocally = () => { box.classList.remove('auto'); box.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b.dataset.auto === '0')); };
+  r.oninput = () => { r.dataset.dragging = 1; val.textContent = r.value; manualLocally(); camSend[kind](r.value); };
+  r.onchange = async () => { camSend[kind].now(r.value); delete r.dataset.dragging; };
+  box.querySelectorAll('[data-step]').forEach(b => b.onclick = () => camStep(kind, +b.dataset.step));
+  box.querySelectorAll('.seg button').forEach(b => b.onclick = () => camRequest({ [k.auto]: b.dataset.auto }));
+}
+// Move by whole steps from the current value (switches to manual), as the -/+ buttons and the [ ] keys do.
+function camStep(kind, dir) {
+  const g = camGroup(kind);
+  if (!g || !g.available) return false;
+  const step = g.step || 1, cur = g.value ?? g.min;
+  const v = Math.max(g.min, Math.min(g.max, cur + dir * step));
+  if (kind === 'focus') cam = { ...cam, focus: v, autofocus: false }; else cam = { ...cam, exposure: { ...g, value: v, auto: false } };
+  showCamera(cam);
+  camSend[kind](v);
+  return v;
+}
+function focusKey(key) {
+  const f = camGroup('focus');
+  if (!f || !f.available) { toast(`Focus control not available${f && f.reason ? `: ${f.reason}` : ''}`); return; }
+  if (key === 'f') {
+    const auto = !f.auto;
+    cam = { ...cam, autofocus: auto }; showCamera(cam);
+    camRequest({ autofocus: auto ? 1 : 0 });
+    toast(auto ? 'Autofocus' : `Manual focus ${f.value ?? ''}`);
+  } else {
+    const v = camStep('focus', key === ']' ? 1 : -1);
+    toast(`Focus ${v} (${f.min}–${f.max})`);
+  }
+}
+camRequest();
+$('#present').onclick = () => setPresent(!document.body.classList.contains('present'));
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  if (e.key === 'p') setPresent(!document.body.classList.contains('present'));
+  else if (e.key === 's' && !document.body.classList.contains('present')) setDrawer($('#drawer').classList.contains('hidden'));
+  else if (e.key === 'Escape') setDrawer(false);
+  else if (e.key === 'f' || e.key === '[' || e.key === ']') focusKey(e.key);
+});
+document.addEventListener('click', e => {
+  if (!$('#drawer').classList.contains('hidden') && !e.target.closest('#drawer, #settings-btn')) setDrawer(false);
+});
+setPresent(store.get('ardubeeno.present') === '1');
+
+// Reconnect the stream if it drops (e.g. after an app restart).
+$('#stream').onerror = () => setTimeout(() => { $('#stream').src = `stream?t=${Date.now()}`; }, 1000);
+</script>
+</body>
+</html>

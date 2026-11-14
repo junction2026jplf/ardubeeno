@@ -1,0 +1,6 @@
+name: ArduBeeno Varroa
+icon: 🐝
+description: "Live Varroa mite detection on a USB camera, with a browser preview of where the mites are and the LED matrix as a warning light. Requires a camera connected to the board."
+
+bricks:
+  - arduino:web_ui

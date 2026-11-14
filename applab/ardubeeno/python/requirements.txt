@@ -1,0 +1,2 @@
+# The UNO Q's versions (python 3.13.5, opencv 5.0.0 comes with the board); numpy comes with onnxruntime.
+onnxruntime==1.32.0

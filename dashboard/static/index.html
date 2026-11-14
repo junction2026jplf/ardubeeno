@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>ArduBeeno · Hive history</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header class="top"><a class="brand" href="/" aria-label="ArduBeeno home"><span aria-hidden="true">✳</span>ArduBeeno</a><span class="badge" id="connection">Connecting</span></header>
+  <section class="intro"><div class="eyebrow">YOUR HIVE, OVER TIME</div><h1>A closer look at mite activity.</h1><p>All observed bees, including those with detected mites.</p></section>
+  <div class="notice" id="notice" role="status" hidden></div>
+  <section class="controls" aria-label="History filters">
+    <label>Device<select id="device" disabled><option>Loading devices…</option></select></label>
+    <label>Source<select id="source"><option value="field">Field observations</option><option value="screen_demo">Screen demonstration</option><option value="replay">Recorded replay</option></select></label>
+    <label>Timezone<select id="timezone"><option value="UTC">UTC</option></select></label>
+    <div class="range-wrap"><span class="control-label">Time range</span><div class="ranges" aria-label="Time range"><button data-days="1" aria-pressed="false">24 hours</button><button data-days="7" aria-pressed="true">7 days</button><button data-days="30" aria-pressed="false">30 days</button></div></div>
+  </section>
+  <section class="stats" aria-label="Period summary" aria-live="polite">
+    <article class="stat"><p>Total bees observed</p><div class="value" id="total-bees">—</div><small>All completed bee passages</small></article>
+    <article class="stat"><p>Bees with detected mites</p><div class="value" id="total-mites">—</div><small>Included in the observed total</small></article>
+    <article class="stat"><p>Bees per recorded hour</p><div class="value" id="rate">—</div><small>All observed bees ÷ recorded time</small></article>
+    <article class="stat"><p>Recording coverage</p><div class="value" id="coverage">—</div><small id="coverage-detail">Waiting for recording history</small></article>
+  </section>
+  <article class="panel chart-panel" id="history-panel" aria-busy="true">
+    <div class="panel-head"><div><h2 id="chart-title">Daily bees observed</h2><p class="small muted" id="period">Loading history…</p></div><button id="export" class="secondary" disabled>Export CSV ↓</button></div>
+    <div class="chart-controls"><div class="legend" aria-label="Chart legend"><span id="other-legend"><i class="swatch" aria-hidden="true"></i><span id="other-label">Other observed bees</span></span><span id="mite-legend"><i class="swatch mites" aria-hidden="true"></i>With detected mites</span></div><label class="solo">Solo<select id="solo"><option value="both">None — show both</option><option value="bees">All bees observed only</option><option value="mites">Bees with mites only</option></select></label></div>
+    <div class="empty" id="empty" hidden><h3>No recording history yet</h3><p>Received observations will appear here once the device uploads its history.</p></div>
+    <div class="chart-scroll" id="chart-scroll"><div class="plot" id="plot" role="group" aria-label="Bee count chart. Select a bar for exact counts and recording coverage."><div id="grid" class="gridlines" aria-hidden="true"></div><div id="bars" class="bars"></div></div></div>
+    <div class="chart-note"><span>Striped: partial recording · gaps: no recording</span><span id="chart-unit">Bees / day</span></div>
+    <div id="inspection" class="inspection" aria-live="polite">Select a period to inspect its counts.</div>
+  </article>
+  <div class="bottom">
+    <article class="panel"><div class="panel-head"><h2>Recorded history</h2><span class="small muted">Latest first</span></div><div class="table-scroll"><table><caption class="sr-only">Exact counts and recording coverage for each period</caption><thead><tr><th scope="col">Period</th><th scope="col">All bees</th><th scope="col">With mites</th><th scope="col">Uncertain</th><th scope="col">Recorded</th></tr></thead><tbody id="history-table"><tr><td colspan="5">Waiting for history</td></tr></tbody></table></div></article>
+    <article class="panel"><h2>Device &amp; recording</h2><dl class="status-list"><div><dt>Status</dt><dd id="device-status">Waiting</dd></div><div><dt>Last received</dt><dd id="last-received">—</dd></div><div><dt>Last device event</dt><dd id="last-event">—</dd></div><div><dt>Pending upload</dt><dd id="pending">—</dd></div><div><dt>Dashboard updated</dt><dd id="last-updated">—</dd></div></dl><p class="small muted measurement">Each completed bee track counts once. Returning bees may count as another passage. “Other observed bees” includes uncertain mite assessments; it does not mean mite-free.</p></article>
+  </div>
+  <footer>Counts describe observed bee passages, not unique colony members or an estimate of colony infestation. Missing recording periods are never shown as zero.</footer>
+</main>
+</body>
+</html>
