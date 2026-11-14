@@ -108,7 +108,8 @@ ui.expose_api("GET", "/crop", crop)
 ui.expose_api("GET", "/camera", camera_ctl)
 ui.expose_api("POST", "/camera", camera_ctl)
 
-led, shown, seq = None, None, 0
+seq = 0
+LED_REFRESH_S = 2  # resend the LED state this often even unchanged: a (re)started sketch shows the tick until told
 
 
 def grab():
@@ -126,22 +127,33 @@ def grab():
             monitor.show(frame)
 
 
+def show_on_led():
+    """The LED matrix follows the page's count and mite state: sent on every change (a /reset shows the tick, a
+    restored count shows at startup, before the first frame) and again every LED_REFRESH_S seconds. Runs in its own
+    thread with a short timeout, so a sketch that is not running (yet) never stalls the detection."""
+    shown, sent_at, error = None, 0.0, None
+    while True:
+        state = monitor.current()
+        led = (bool(state.get("mite")), int(state.get("count") or 0))
+        if led != shown or time.monotonic() - sent_at >= LED_REFRESH_S:
+            try:
+                Bridge.call("set_count", led[1], timeout=1)
+                Bridge.call("set_mite", led[0], timeout=1)
+                shown, error = led, None
+            except Exception as e:  # the app still works without the sketch; retried until it answers
+                if str(e) != error:
+                    print(f"LED matrix not updated: {e}")
+                shown, error = None, str(e)
+                time.sleep(1)
+            sent_at = time.monotonic()
+        time.sleep(0.1)
+
+
 def loop():
-    global led, shown, seq
+    global seq
     seq, frame = monitor.next_frame(seq, timeout=1)
-    if frame is None:
-        return
-    mite = monitor.process(frame, seq)
-    count = monitor.current()["count"]
-    try:
-        if mite != led:
-            Bridge.call("set_mite", mite)
-            led = mite
-        if count != shown:
-            Bridge.call("set_count", count)
-            shown = count
-    except Exception as e:  # the app still works without the sketch
-        print(f"LED matrix not updated: {e}")
+    if frame is not None:
+        monitor.process(frame, seq)
 
 
 if monitor.recorder:  # exit cleanly on stop so the recorded history is closed
@@ -161,4 +173,5 @@ try:
 except Exception as e:
     print(f"camera focus: {e}")
 threading.Thread(target=grab, daemon=True).start()
+threading.Thread(target=show_on_led, daemon=True).start()
 App.run(user_loop=loop)
