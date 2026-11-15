@@ -56,6 +56,10 @@ amber: uncertain, red: with mites. Striped bars mark times when the board record
 The "looking" is done by small artificial-intelligence models that we trained on thousands of bee pictures: some with
 mites, some without. They are small enough to run on the board itself, so no picture ever leaves the hive.
 
+We built it in two steps: first a model that checks a close-up of a single bee for mites, then a second model that
+finds the bees in the camera picture and cuts out those close-ups for the first. How and why:
+[docs/APPROACH.md](docs/APPROACH.md).
+
 ## How good is it?
 
 So far we have tested it with bee pictures shown on a laptop screen and filmed by the camera; it has not been at a
@@ -175,7 +179,7 @@ The classifier, the bee detector, the camera fine-tune, quantization and the dep
 | `dashboard/` | Receiver API (FastAPI + SQLite) and dashboard for the board's events, with tests |
 | `scripts/` | Data conversion, training, evaluation, ONNX export and quantization, screen recording, laptop tools |
 | `demo/` | `start-receiver.sh`; the local `*.env` config files are not in git |
-| `docs/` | Results, training, Verda GPUs, uploads (see Documentation) |
+| `docs/` | How we built it, results, training, Verda GPUs, uploads (see Documentation) |
 | `Makefile` | Entry points (`make help`) |
 
 ## Not in this repo
@@ -193,6 +197,7 @@ The models can be rebuilt with the scripts and the datasets below; the trained O
 | Topic | Document |
 |---|---|
 | The board app: modes, settings, speed, App Lab | [applab/ardubeeno/README.md](applab/ardubeeno/README.md) |
+| How we built it: mite check on close-ups first, then the bee finder | [docs/APPROACH.md](docs/APPROACH.md) |
 | Models: data, training, evaluation, export | [docs/TRAINING.md](docs/TRAINING.md) |
 | Every experiment and measurement | [docs/RESULTS.md](docs/RESULTS.md) |
 | The Verda GPU servers used for training | [docs/VERDA.md](docs/VERDA.md) |
